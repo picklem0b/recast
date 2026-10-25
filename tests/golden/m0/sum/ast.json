@@ -1,0 +1,436 @@
+{
+  "schema": "recast-ast/1",
+  "target": {
+    "char_signed": false,
+    "endian": "little",
+    "int_bits": 32,
+    "long_bits": 64,
+    "long_long_bits": 64,
+    "pointer_bits": 64,
+    "triple": "aarch64-unknown-linux-gnu"
+  },
+  "translation_units": [
+    {
+      "file": "input.c",
+      "functions": [
+        {
+          "body": {
+            "kind": "compound",
+            "stmts": [
+              {
+                "init": {
+                  "kind": "int_lit",
+                  "type": {
+                    "bits": 32,
+                    "kind": "int",
+                    "signed": true,
+                    "spelling": "int"
+                  },
+                  "value": 0
+                },
+                "kind": "decl",
+                "name": "s",
+                "span": {
+                  "column": 9,
+                  "file": "input.c",
+                  "line": 4
+                },
+                "type": {
+                  "bits": 32,
+                  "kind": "int",
+                  "signed": true,
+                  "spelling": "int"
+                }
+              },
+              {
+                "body": {
+                  "kind": "compound",
+                  "stmts": [
+                    {
+                      "expr": {
+                        "kind": "assign",
+                        "lhs": {
+                          "kind": "decl_ref",
+                          "name": "s",
+                          "type": {
+                            "bits": 32,
+                            "kind": "int",
+                            "signed": true,
+                            "spelling": "int"
+                          }
+                        },
+                        "op": "+=",
+                        "rhs": {
+                          "expr": {
+                            "base": {
+                              "expr": {
+                                "kind": "decl_ref",
+                                "name": "a",
+                                "type": {
+                                  "kind": "pointer",
+                                  "pointee": {
+                                    "bits": 32,
+                                    "kind": "int",
+                                    "signed": true,
+                                    "spelling": "const int"
+                                  },
+                                  "pointee_const": true
+                                }
+                              },
+                              "implicit": true,
+                              "kind": "cast",
+                              "to": {
+                                "kind": "pointer",
+                                "pointee": {
+                                  "bits": 32,
+                                  "kind": "int",
+                                  "signed": true,
+                                  "spelling": "const int"
+                                },
+                                "pointee_const": true
+                              },
+                              "type": {
+                                "kind": "pointer",
+                                "pointee": {
+                                  "bits": 32,
+                                  "kind": "int",
+                                  "signed": true,
+                                  "spelling": "const int"
+                                },
+                                "pointee_const": true
+                              }
+                            },
+                            "index": {
+                              "expr": {
+                                "kind": "decl_ref",
+                                "name": "i",
+                                "type": {
+                                  "canonical": {
+                                    "bits": 64,
+                                    "kind": "int",
+                                    "signed": false,
+                                    "spelling": "unsigned long"
+                                  },
+                                  "kind": "named",
+                                  "name": "size_t"
+                                }
+                              },
+                              "implicit": true,
+                              "kind": "cast",
+                              "to": {
+                                "canonical": {
+                                  "bits": 64,
+                                  "kind": "int",
+                                  "signed": false,
+                                  "spelling": "unsigned long"
+                                },
+                                "kind": "named",
+                                "name": "size_t"
+                              },
+                              "type": {
+                                "canonical": {
+                                  "bits": 64,
+                                  "kind": "int",
+                                  "signed": false,
+                                  "spelling": "unsigned long"
+                                },
+                                "kind": "named",
+                                "name": "size_t"
+                              }
+                            },
+                            "kind": "index",
+                            "type": {
+                              "bits": 32,
+                              "kind": "int",
+                              "signed": true,
+                              "spelling": "const int"
+                            }
+                          },
+                          "implicit": true,
+                          "kind": "cast",
+                          "to": {
+                            "bits": 32,
+                            "kind": "int",
+                            "signed": true,
+                            "spelling": "int"
+                          },
+                          "type": {
+                            "bits": 32,
+                            "kind": "int",
+                            "signed": true,
+                            "spelling": "int"
+                          }
+                        },
+                        "type": {
+                          "bits": 32,
+                          "kind": "int",
+                          "signed": true,
+                          "spelling": "int"
+                        }
+                      },
+                      "kind": "expr",
+                      "span": {
+                        "column": 9,
+                        "file": "input.c",
+                        "line": 6
+                      }
+                    }
+                  ]
+                },
+                "cond": {
+                  "kind": "binary",
+                  "lhs": {
+                    "expr": {
+                      "kind": "decl_ref",
+                      "name": "i",
+                      "type": {
+                        "canonical": {
+                          "bits": 64,
+                          "kind": "int",
+                          "signed": false,
+                          "spelling": "unsigned long"
+                        },
+                        "kind": "named",
+                        "name": "size_t"
+                      }
+                    },
+                    "implicit": true,
+                    "kind": "cast",
+                    "to": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    },
+                    "type": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    }
+                  },
+                  "op": "<",
+                  "rhs": {
+                    "expr": {
+                      "kind": "decl_ref",
+                      "name": "n",
+                      "type": {
+                        "canonical": {
+                          "bits": 64,
+                          "kind": "int",
+                          "signed": false,
+                          "spelling": "unsigned long"
+                        },
+                        "kind": "named",
+                        "name": "size_t"
+                      }
+                    },
+                    "implicit": true,
+                    "kind": "cast",
+                    "to": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    },
+                    "type": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    }
+                  },
+                  "type": {
+                    "bits": 32,
+                    "kind": "int",
+                    "signed": true,
+                    "spelling": "int"
+                  }
+                },
+                "init": {
+                  "init": {
+                    "expr": {
+                      "kind": "int_lit",
+                      "type": {
+                        "bits": 32,
+                        "kind": "int",
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "value": 0
+                    },
+                    "implicit": true,
+                    "kind": "cast",
+                    "to": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    },
+                    "type": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    }
+                  },
+                  "kind": "decl",
+                  "name": "i",
+                  "span": {
+                    "column": 17,
+                    "file": "input.c",
+                    "line": 5
+                  },
+                  "type": {
+                    "canonical": {
+                      "bits": 64,
+                      "kind": "int",
+                      "signed": false,
+                      "spelling": "unsigned long"
+                    },
+                    "kind": "named",
+                    "name": "size_t"
+                  }
+                },
+                "kind": "for",
+                "span": {
+                  "column": 5,
+                  "file": "input.c",
+                  "line": 5
+                },
+                "step": {
+                  "kind": "unary",
+                  "op": "++",
+                  "operand": {
+                    "kind": "decl_ref",
+                    "name": "i",
+                    "type": {
+                      "canonical": {
+                        "bits": 64,
+                        "kind": "int",
+                        "signed": false,
+                        "spelling": "unsigned long"
+                      },
+                      "kind": "named",
+                      "name": "size_t"
+                    }
+                  },
+                  "postfix": true,
+                  "type": {
+                    "canonical": {
+                      "bits": 64,
+                      "kind": "int",
+                      "signed": false,
+                      "spelling": "unsigned long"
+                    },
+                    "kind": "named",
+                    "name": "size_t"
+                  }
+                }
+              },
+              {
+                "kind": "return",
+                "span": {
+                  "column": 5,
+                  "file": "input.c",
+                  "line": 8
+                },
+                "value": {
+                  "expr": {
+                    "kind": "decl_ref",
+                    "name": "s",
+                    "type": {
+                      "bits": 32,
+                      "kind": "int",
+                      "signed": true,
+                      "spelling": "int"
+                    }
+                  },
+                  "implicit": true,
+                  "kind": "cast",
+                  "to": {
+                    "bits": 32,
+                    "kind": "int",
+                    "signed": true,
+                    "spelling": "int"
+                  },
+                  "type": {
+                    "bits": 32,
+                    "kind": "int",
+                    "signed": true,
+                    "spelling": "int"
+                  }
+                }
+              }
+            ]
+          },
+          "linkage": "external",
+          "name": "sum",
+          "params": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "pointer",
+                "pointee": {
+                  "bits": 32,
+                  "kind": "int",
+                  "signed": true,
+                  "spelling": "const int"
+                },
+                "pointee_const": true
+              }
+            },
+            {
+              "name": "n",
+              "type": {
+                "canonical": {
+                  "bits": 64,
+                  "kind": "int",
+                  "signed": false,
+                  "spelling": "unsigned long"
+                },
+                "kind": "named",
+                "name": "size_t"
+              }
+            }
+          ],
+          "return_type": {
+            "bits": 32,
+            "kind": "int",
+            "signed": true,
+            "spelling": "int"
+          },
+          "span": {
+            "column": 5,
+            "file": "input.c",
+            "line": 3
+          }
+        }
+      ]
+    }
+  ]
+}
