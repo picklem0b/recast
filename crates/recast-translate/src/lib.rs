@@ -121,8 +121,7 @@ impl<'a> Translator<'a> {
                 .name
                 .clone()
                 .ok_or_else(|| self.error("a parameter has no name"))?;
-            if let Some(plan) = self.slice_by_length(&name) {
-                let _ = plan;
+            if self.slice_by_length(&name).is_some() {
                 continue;
             }
             if let Some(plan) = self.slice_by_pointer(&name) {

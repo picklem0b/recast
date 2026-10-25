@@ -340,7 +340,7 @@ fn export(global: &Global) -> Result<u8, CliError> {
 
 fn find_exporter(global: &Global) -> Option<PathBuf> {
     if let Some(path) = &global.exporter {
-        return path.is_file().then(|| path.clone());
+        return path.is_file().then_some(path.clone());
     }
     if let Some(path) = std::env::var_os("RECAST_EXPORTER") {
         let path = PathBuf::from(path);
@@ -357,12 +357,9 @@ fn find_exporter(global: &Global) -> Option<PathBuf> {
 fn sibling_exporter() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    for candidate in [dir.join("recast-exporter"), dir.join("../recast-exporter")] {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    [dir.join("recast-exporter"), dir.join("../recast-exporter")]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
 }
 
 fn analyze(global: &Global) -> Result<u8, CliError> {

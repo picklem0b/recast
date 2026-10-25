@@ -267,7 +267,7 @@ impl Lowerer {
                 let id = nodes.next();
                 let ty = self.lower_type(ty);
                 let init = match init {
-                    Some(init) => Some(self.lower_expr(init, file, nodes)?),
+                    Some(init) => Some(self.lower_expr(init, nodes)?),
                     None => None,
                 };
                 (
@@ -293,11 +293,11 @@ impl Lowerer {
                     None => None,
                 };
                 let cond = match cond {
-                    Some(cond) => Some(self.lower_condition(cond, file, nodes)?),
+                    Some(cond) => Some(self.lower_condition(cond, nodes)?),
                     None => None,
                 };
                 let step = match step {
-                    Some(step) => Some(self.lower_expr(step, file, nodes)?),
+                    Some(step) => Some(self.lower_expr(step, nodes)?),
                     None => None,
                 };
                 let body = self.lower_block(body, file, nodes)?;
@@ -314,7 +314,7 @@ impl Lowerer {
             }
             schema::Stmt::While { cond, body, span } => {
                 let id = nodes.next();
-                let cond = self.lower_condition(cond, file, nodes)?;
+                let cond = self.lower_condition(cond, nodes)?;
                 let body = self.lower_block(body, file, nodes)?;
                 (id, StmtKind::While { cond, body }, span)
             }
@@ -325,7 +325,7 @@ impl Lowerer {
                 span,
             } => {
                 let id = nodes.next();
-                let cond = self.lower_condition(cond, file, nodes)?;
+                let cond = self.lower_condition(cond, nodes)?;
                 let then_branch = self.lower_block(then_branch, file, nodes)?;
                 let else_branch = match else_branch.as_deref() {
                     Some(branch) => Some(self.lower_block(branch, file, nodes)?),
@@ -344,14 +344,14 @@ impl Lowerer {
             schema::Stmt::Return { value, span } => {
                 let id = nodes.next();
                 let value = match value {
-                    Some(value) => Some(self.lower_expr(value, file, nodes)?),
+                    Some(value) => Some(self.lower_expr(value, nodes)?),
                     None => None,
                 };
                 (id, StmtKind::Return(value), span)
             }
             schema::Stmt::Expr { expr, span } => {
                 let id = nodes.next();
-                let expr = self.lower_expr(expr, file, nodes)?;
+                let expr = self.lower_expr(expr, nodes)?;
                 (id, StmtKind::Expr(expr), span)
             }
             schema::Stmt::Empty => return Ok(None),
@@ -372,19 +372,18 @@ impl Lowerer {
     fn lower_condition(
         &mut self,
         cond: &schema::Expr,
-        file: &str,
         nodes: &mut NodeIds,
     ) -> Result<Expr, FrontendError> {
         let needs_cast = !matches!(cond.ty, schema::Ty::Bool);
         if !needs_cast {
-            return self.lower_expr(cond, file, nodes);
+            return self.lower_expr(cond, nodes);
         }
         // Conditions normalize to bool explicitly, which is what document 04
         // requires of every implicit conversion. The cast id is allocated
         // before the operand so ordinals stay in pre-order.
         let id = nodes.next();
         let to = self.program.types.intern(Type::Bool);
-        let operand = self.lower_expr(cond, file, nodes)?;
+        let operand = self.lower_expr(cond, nodes)?;
         Ok(Expr {
             id,
             ty: to,
@@ -401,7 +400,6 @@ impl Lowerer {
     fn lower_expr(
         &mut self,
         expr: &schema::Expr,
-        file: &str,
         nodes: &mut NodeIds,
     ) -> Result<Expr, FrontendError> {
         let id = nodes.next();
@@ -439,8 +437,8 @@ impl Lowerer {
                 provenance,
             },
             schema::ExprKind::Binary { op, lhs, rhs } => {
-                let lhs = self.lower_expr(lhs, file, nodes)?;
-                let rhs = self.lower_expr(rhs, file, nodes)?;
+                let lhs = self.lower_expr(lhs, nodes)?;
+                let rhs = self.lower_expr(rhs, nodes)?;
                 Expr {
                     id,
                     ty,
@@ -454,8 +452,8 @@ impl Lowerer {
                 }
             }
             schema::ExprKind::Assign { op, lhs, rhs } => {
-                let lhs = self.lower_expr(lhs, file, nodes)?;
-                let rhs = self.lower_expr(rhs, file, nodes)?;
+                let lhs = self.lower_expr(lhs, nodes)?;
+                let rhs = self.lower_expr(rhs, nodes)?;
                 Expr {
                     id,
                     ty,
@@ -473,7 +471,7 @@ impl Lowerer {
                 operand,
                 postfix,
             } => {
-                let operand = self.lower_expr(operand, file, nodes)?;
+                let operand = self.lower_expr(operand, nodes)?;
                 let category = if op == "*" {
                     ValueCategory::LValue
                 } else {
@@ -492,8 +490,8 @@ impl Lowerer {
                 }
             }
             schema::ExprKind::Index { base, index } => {
-                let base = self.lower_expr(base, file, nodes)?;
-                let index = self.lower_expr(index, file, nodes)?;
+                let base = self.lower_expr(base, nodes)?;
+                let index = self.lower_expr(index, nodes)?;
                 Expr {
                     id,
                     ty,
@@ -508,7 +506,7 @@ impl Lowerer {
             schema::ExprKind::Call { callee, args } => {
                 let mut lowered = Vec::with_capacity(args.len());
                 for arg in args {
-                    lowered.push(self.lower_expr(arg, file, nodes)?);
+                    lowered.push(self.lower_expr(arg, nodes)?);
                 }
                 let callee = match self.items.get(callee) {
                     Some(id) => Callee::Direct(id.clone()),
@@ -527,7 +525,7 @@ impl Lowerer {
             }
             schema::ExprKind::Cast { to, expr, implicit } => {
                 let to = self.lower_type(to);
-                let operand = self.lower_expr(expr, file, nodes)?;
+                let operand = self.lower_expr(expr, nodes)?;
                 Expr {
                     id,
                     ty,
@@ -541,7 +539,7 @@ impl Lowerer {
                 }
             }
             schema::ExprKind::Paren { expr } => {
-                let inner = self.lower_expr(expr, file, nodes)?;
+                let inner = self.lower_expr(expr, nodes)?;
                 let category = inner.category;
                 Expr {
                     id,
