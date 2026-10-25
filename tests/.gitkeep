@@ -1,0 +1,1 @@
+# Cross-crate goldens; unit and integration tests stay in their crates. See docs/SCAFFOLD.md.
