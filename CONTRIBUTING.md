@@ -23,10 +23,12 @@ Commits carry no co-author, generated-by or tool-attribution footers.
 Tags are annotated and the message starts with the tag name, matching the release history:
 
 ```
-git tag -a v0.1.0 -m "v0.1.0: first working vertical slice"
+git tag -a v1.0.0-rc.1 -m "v1.0.0-rc.1: repository structure proposal"
 ```
 
-Use `spec-vMAJOR.MINOR.PATCH` for a tagged state of the specification and `vMAJOR.MINOR.PATCH` for a verified implementation release. Tag only when the state is reproducible: the documents are consistent, or the code typechecks and its tests pass. Never move or delete a published tag.
+Use `spec-vMAJOR.MINOR.PATCH` for the foundation specification and `v1.0.x` for the structural scaffold. `v1.0.0` is the approved structure, not a working release. Use `v1.1.x` for implementation slices; that line starts only after explicit approval.
+
+Tag only when the state is reproducible: the documents and paths are consistent, or the code typechecks and its tests pass. Never move or delete a published tag.
 
 ## Code and documents
 
