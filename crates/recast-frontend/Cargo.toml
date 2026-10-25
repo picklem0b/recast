@@ -1,0 +1,10 @@
+[package]
+name = "recast-frontend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+recast-schema = { path = "../recast-schema" }
+recast-ir = { path = "../recast-ir" }

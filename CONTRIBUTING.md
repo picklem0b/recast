@@ -23,10 +23,10 @@ Commits carry no co-author, generated-by or tool-attribution footers.
 Tags are annotated and the message starts with the tag name, matching the release history:
 
 ```
-git tag -a v1.0.0-rc.1 -m "v1.0.0-rc.1: repository structure proposal"
+git tag -a v1.0.1 -m "v1.0.1: workspace and toolchain"
 ```
 
-Use `spec-vMAJOR.MINOR.PATCH` for the foundation specification and `v1.0.x` for the structural scaffold. `v1.0.0` is the approved structure, not a working release. Use `v1.1.x` for implementation slices; that line starts only after explicit approval.
+Use `v1.M.B`, where `M` is the milestone and `B` is the build. `v1.0.0` is the approved structure. `v1.0.1` to `v1.0.9` are the nine M0 build points, and `v1.0.10` records the three M0 exit criteria. `v1.1.x` begins M1. A build is tagged only when its stated checks pass.
 
 Tag only when the state is reproducible: the documents and paths are consistent, or the code typechecks and its tests pass. Never move or delete a published tag.
 

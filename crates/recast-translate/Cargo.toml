@@ -1,0 +1,13 @@
+[package]
+name = "recast-translate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+recast-ir = { path = "../recast-ir" }
+
+[dev-dependencies]
+recast-schema = { path = "../recast-schema" }
+recast-frontend = { path = "../recast-frontend" }

@@ -1,0 +1,17 @@
+[package]
+name = "recast-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "recast"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+recast-schema = { path = "../recast-schema" }
+recast-ir = { path = "../recast-ir" }
+recast-frontend = { path = "../recast-frontend" }
+recast-translate = { path = "../recast-translate" }
