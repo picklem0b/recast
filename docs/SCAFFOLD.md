@@ -1,6 +1,6 @@
 # v1.0 Scaffold
 
-Status: structure proposal for `v1.0.0-rc.1`. The v1.0.x line contains conventions, directory boundaries and the first-file plan only. No Rust or C++ implementation is part of it. The v1.1.x line starts only after explicit approval.
+Status: approved at `v1.0.0`. The M0 implementation runs as `v1.0.1` to `v1.0.9`, with `v1.0.10` for the three exit criteria. The structure below is unchanged.
 
 ## Scope
 
@@ -10,7 +10,7 @@ The scaffold answers three questions:
 2. Which crate owns each responsibility?
 3. Which files are created first when implementation starts?
 
-It does not create a Cargo workspace, compile anything, add dependencies or pin a toolchain version. Those are v1.1.x decisions.
+The scaffold itself does not create a Cargo workspace, compile anything, add dependencies or pin a toolchain version. Those are M0 build decisions.
 
 ## Repository tree
 
@@ -44,7 +44,7 @@ recast/
 
 ## Crate responsibilities and first files
 
-The files below are the first ones to create in v1.1.x, in this order within each crate. They are not created by the scaffold.
+The files below are the first ones to create in the M0 builds, in this order within each crate.
 
 | Crate                 | Owns                                                                                          | First files                                                                                              |
 | --------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -82,7 +82,7 @@ recast-cli
 
 ## First vertical slice
 
-The v1.1.x work starts with M0 only, in this order:
+The M0 builds start in this order:
 
 1. Root `Cargo.toml`, `rust-toolchain.toml` and workspace lints.
 2. `recast-schema` and `recast-ir`, including the validator.
@@ -144,14 +144,14 @@ The repository is Apache-2.0. Do not add per-file license headers unless a depen
 
 Follow `CONTRIBUTING.md`: Conventional Commits, one purpose per commit, a body that explains why, and no attribution footers.
 
-## What must be true before v1.0.0
+## What v1.0.0 established
 
-- The tree and crate ownership are agreed.
-- The first-file list is agreed.
-- Every planned path has one owner and no cyclic dependency.
-- The README links resolve.
-- No implementation has entered the v1.0.x line.
+- The tree and crate ownership were agreed.
+- The first-file list was agreed.
+- Every planned path had one owner and no cyclic dependency.
+- The README links resolved.
+- No implementation had entered the scaffold line.
 
-## What waits for v1.1.x
+## What the M0 builds add
 
-The Cargo workspace, toolchain pin, dependencies, Rust and C++ source, CI workflows, test harnesses and the first vertical slice all wait for v1.1.x and explicit permission.
+The Cargo workspace, toolchain pin, dependencies, Rust and C++ source, CI workflows, test harnesses and the first vertical slice are added by `v1.0.1` to `v1.0.9`. `v1.0.10` records the three exit criteria.
