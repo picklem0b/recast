@@ -58,5 +58,5 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
           cmake --build exporter/build -j 2
 
-      - name: Exporter pipeline
-        run: bash ci/exporter.sh
+      - name: M0 exit criteria
+        run: bash ci/m0-exit.sh
