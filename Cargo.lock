@@ -34,35 +34,35 @@ dependencies = [
 
 [[package]]
 name = "recast-analysis"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-cli"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-frontend"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-interop"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-ir"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-orchestrator"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-rt"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-schema"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -70,15 +70,15 @@ dependencies = [
 
 [[package]]
 name = "recast-testkit"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-translate"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "recast-verify"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "serde"
@@ -142,7 +142,7 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
 name = "xtask"
-version = "1.0.2"
+version = "1.0.3"
 
 [[package]]
 name = "zmij"

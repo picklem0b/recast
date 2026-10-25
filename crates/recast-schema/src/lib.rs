@@ -161,6 +161,9 @@ pub enum ExprKind {
     FloatLit {
         value: f64,
     },
+    StringLit {
+        value: String,
+    },
     DeclRef {
         name: String,
     },
@@ -403,7 +406,7 @@ fn validate_stmt(stmt: &Stmt, path: &str) -> Result<(), SchemaError> {
 fn validate_expr(expr: &Expr, path: &str) -> Result<(), SchemaError> {
     validate_ty(&expr.ty, &format!("{path}.type"))?;
     match &expr.kind {
-        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } => {}
+        ExprKind::IntLit { .. } | ExprKind::FloatLit { .. } | ExprKind::StringLit { .. } => {}
         ExprKind::DeclRef { name } => {
             if name.is_empty() {
                 return Err(SchemaError::new(
