@@ -82,6 +82,13 @@ enum Format {
     Json,
 }
 
+impl Global {
+    /// `--quiet` suppresses human summaries, never the requested JSON.
+    fn reports(&self) -> bool {
+        !self.quiet || matches!(self.format, Format::Json)
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum CommandLine {
     /// Create recast.toml and recast-contracts.toml templates.
@@ -216,19 +223,21 @@ schema = 1
         ))
     })?;
 
-    match global.format {
-        Format::Human => {
-            println!("created {}", config_path.display());
-            println!("created {}", contracts_path.display());
-            println!("compile database: {compdb}");
-        }
-        Format::Json => {
-            println!(
-                "{{\"created\":[\"{}\",\"{}\"],\"compile_commands\":\"{}\"}}",
-                config_path.display(),
-                contracts_path.display(),
-                compdb
-            );
+    if global.reports() {
+        match global.format {
+            Format::Human => {
+                println!("created {}", config_path.display());
+                println!("created {}", contracts_path.display());
+                println!("compile database: {compdb}");
+            }
+            Format::Json => {
+                println!(
+                    "{{\"created\":[\"{}\",\"{}\"],\"compile_commands\":\"{}\"}}",
+                    config_path.display(),
+                    contracts_path.display(),
+                    compdb
+                );
+            }
         }
     }
     Ok(EXIT_OK)
@@ -324,16 +333,19 @@ fn export(global: &Global) -> Result<u8, CliError> {
             CliError::input(format!("cannot write {}: {error}", path.display()))
         })?;
     }
-
-    match global.format {
-        Format::Human => println!(
-            "exported {units} translation unit(s) to {}",
-            ast_dir.display()
-        ),
-        Format::Json => println!(
-            "{{\"units\":{units},\"directory\":\"{}\"}}",
-            ast_dir.display()
-        ),
+    if global.reports() {
+        match global.format {
+            Format::Human => {
+                println!(
+                    "exported {units} translation unit(s) to {}",
+                    ast_dir.display()
+                )
+            }
+            Format::Json => println!(
+                "{{\"units\":{units},\"directory\":\"{}\"}}",
+                ast_dir.display()
+            ),
+        }
     }
     Ok(EXIT_OK)
 }
@@ -370,15 +382,17 @@ fn analyze(global: &Global) -> Result<u8, CliError> {
         .iter()
         .filter(|f| f.body.is_some())
         .count();
-    match global.format {
-        Format::Human => println!(
-            "analyzed {functions} function(s) from {files} translation unit(s); wrote {}",
-            global.out.join("tir/program.tir").display()
-        ),
-        Format::Json => println!(
-            "{{\"functions\":{functions},\"translation_units\":{files},\"tir\":\"{}\"}}",
-            global.out.join("tir/program.tir").display()
-        ),
+    if global.reports() {
+        match global.format {
+            Format::Human => println!(
+                "analyzed {functions} function(s) from {files} translation unit(s); wrote {}",
+                global.out.join("tir/program.tir").display()
+            ),
+            Format::Json => println!(
+                "{{\"functions\":{functions},\"translation_units\":{files},\"tir\":\"{}\"}}",
+                global.out.join("tir/program.tir").display()
+            ),
+        }
     }
     Ok(EXIT_OK)
 }
@@ -405,6 +419,9 @@ edition = \"2021\"
 
 [lib]
 path = \"src/lib.rs\"
+
+[profile.release]
+overflow-checks = true
 "
     );
     std::fs::write(crate_dir.join("Cargo.toml"), manifest).map_err(|error| {
@@ -422,15 +439,17 @@ path = \"src/lib.rs\"
         .iter()
         .filter(|f| f.body.is_some())
         .count();
-    match global.format {
-        Format::Human => println!(
-            "translated {functions} function(s) from {files} translation unit(s) to {}",
-            crate_dir.display()
-        ),
-        Format::Json => println!(
-            "{{\"functions\":{functions},\"translation_units\":{files},\"crate\":\"{}\"}}",
-            crate_dir.display()
-        ),
+    if global.reports() {
+        match global.format {
+            Format::Human => println!(
+                "translated {functions} function(s) from {files} translation unit(s) to {}",
+                crate_dir.display()
+            ),
+            Format::Json => println!(
+                "{{\"functions\":{functions},\"translation_units\":{files},\"crate\":\"{}\"}}",
+                crate_dir.display()
+            ),
+        }
     }
     Ok(EXIT_OK)
 }

@@ -149,6 +149,7 @@ impl Expr {
 pub enum Stmt {
     Let {
         name: String,
+        mutable: bool,
         ty: String,
         init: Option<Expr>,
     },
@@ -239,18 +240,26 @@ impl Stmt {
     fn render(&self, out: &mut String, depth: usize) {
         let pad = "    ".repeat(depth);
         match self {
-            Stmt::Let { name, ty, init } => match init {
-                Some(init) => {
-                    let _ = writeln!(
-                        out,
-                        "{pad}let mut {name}: {ty} = {};",
-                        init.render_to_string()
-                    );
+            Stmt::Let {
+                name,
+                mutable,
+                ty,
+                init,
+            } => {
+                let binding = if *mutable { "mut " } else { "" };
+                match init {
+                    Some(init) => {
+                        let _ = writeln!(
+                            out,
+                            "{pad}let {binding}{name}: {ty} = {};",
+                            init.render_to_string()
+                        );
+                    }
+                    None => {
+                        let _ = writeln!(out, "{pad}let {binding}{name}: {ty};");
+                    }
                 }
-                None => {
-                    let _ = writeln!(out, "{pad}let mut {name}: {ty};");
-                }
-            },
+            }
             Stmt::Assign { target, op, value } => {
                 let _ = writeln!(
                     out,

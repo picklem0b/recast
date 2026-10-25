@@ -80,6 +80,12 @@ fn analyze_and_translate_produce_a_compiling_crate() {
         source.contains("pub fn add(a: i32, b: i32) -> i32"),
         "{source}"
     );
+    let manifest = std::fs::read_to_string(dir.join("recast-out/rust/Cargo.toml"))
+        .expect("read generated manifest");
+    assert!(
+        manifest.contains("overflow-checks = true"),
+        "release builds keep C's panic-on-signed-overflow policy:\n{manifest}"
+    );
 
     let artifact = dir.join("generated.rmeta");
     let compiled = Command::new("rustc")
@@ -94,6 +100,15 @@ fn analyze_and_translate_produce_a_compiling_crate() {
         "generated crate does not compile:\n{}",
         String::from_utf8_lossy(&compiled.stderr)
     );
+}
+
+#[test]
+fn quiet_suppresses_the_human_summary() {
+    let dir = temp_dir("quiet");
+    install_fixtures(&dir);
+    let output = recast(&dir, &["analyze", "--quiet"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stdout.is_empty(), "{:?}", output.stdout);
 }
 
 #[test]

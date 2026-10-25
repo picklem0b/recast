@@ -1,6 +1,6 @@
 # v1.0 Scaffold
 
-Status: approved at `v1.0.0`. The M0 implementation runs as `v1.0.1` to `v1.0.9`, with `v1.0.10` for the three exit criteria. The structure below is unchanged.
+Status: approved at `v1.0.0`. The M0 implementation runs as `v1.0.1` to `v1.0.9`, with `v1.0.10` for the three exit criteria and `v1.0.11` for the post-exit audit repairs. The structure below is unchanged.
 
 ## Scope
 
