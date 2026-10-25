@@ -1,0 +1,6 @@
+/target/
+/recast-out/
+/build/
+/cmake-build-*/
+*.log
+.DS_Store
