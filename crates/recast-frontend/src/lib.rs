@@ -172,7 +172,8 @@ impl Lowerer {
                 signed,
                 spelling,
             } => {
-                if is_plain_char(spelling) {
+                let spelling = normalize_spelling(spelling);
+                if spelling == "char" {
                     Type::Char { signed: *signed }
                 } else {
                     Type::int(*bits, *signed, spelling)
@@ -180,7 +181,7 @@ impl Lowerer {
             }
             schema::Ty::Float { bits, spelling } => Type::Float {
                 bits: u16::from(*bits),
-                spelling: spelling.clone(),
+                spelling: normalize_spelling(spelling),
             },
             schema::Ty::Pointer {
                 pointee,
@@ -592,11 +593,17 @@ fn span_of_raw(span: &schema::Span, file: &str) -> Span {
     Span::new(file, span.line, span.column)
 }
 
-fn is_plain_char(spelling: &str) -> bool {
+/// Strip type qualifiers so `const int` and `int` intern as one type.
+///
+/// Qualifiers on a pointee live in [`Type::Pointer::is_const`]; leaving them in
+/// the spelling as well would give the same C type two TIR identities and
+/// force spurious casts into translation.
+fn normalize_spelling(spelling: &str) -> String {
     spelling
         .split_whitespace()
         .filter(|word| !matches!(*word, "const" | "volatile" | "restrict"))
-        .eq(std::iter::once("char"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -604,10 +611,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_char_is_recognized_through_qualifiers() {
-        assert!(is_plain_char("char"));
-        assert!(is_plain_char("const char"));
-        assert!(!is_plain_char("signed char"));
-        assert!(!is_plain_char("unsigned char"));
+    fn qualifiers_do_not_create_new_integer_types() {
+        assert_eq!(normalize_spelling("const int"), "int");
+        assert_eq!(
+            normalize_spelling("volatile unsigned long"),
+            "unsigned long"
+        );
+        assert_eq!(normalize_spelling("signed char"), "signed char");
+        assert_eq!(normalize_spelling("unsigned char"), "unsigned char");
     }
 }
