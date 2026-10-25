@@ -4,7 +4,7 @@
 
 ## Status
 
-**M0 complete.** The nine build points are tagged `v1.0.1` to `v1.0.9`, and `v1.0.10` records the three exit criteria. `ci/m0-exit.sh` checks them: `add` and `sum` cross C to compiling Rust and agree with the C at runtime, two complete runs are byte-identical, and the exported schema round-trips. The sixteen foundation documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
+**M0 complete.** The nine build points are tagged `v1.0.1` to `v1.0.9`, `v1.0.10` records the three exit criteria, and `v1.0.11` carries the audit repairs. The audit and its remaining limits are in [`docs/AUDIT-M0.md`](docs/AUDIT-M0.md). `ci/m0-exit.sh` checks them: `add` and `sum` cross C to compiling Rust and agree with the C at runtime, two complete runs are byte-identical, and the exported schema round-trips. The sixteen foundation documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
 
 M0 proves the vertical slice, not the product. It translates scalar functions and the `const int *, size_t` slice pattern to safe Rust that compiles. Records, macros, heap ownership and the verification ladder start at M1 and M2.
 

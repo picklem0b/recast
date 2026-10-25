@@ -9,6 +9,10 @@ fn exporter_documents_round_trip_without_loss() {
             "checksum",
             include_str!("../../../tests/fixtures/ast/checksum.json"),
         ),
+        (
+            "integer",
+            include_str!("../../../tests/fixtures/ast/integer.json"),
+        ),
     ] {
         let ast = Ast::from_json(json).unwrap_or_else(|error| panic!("{name}: {error}"));
         let encoded = ast.to_json_pretty().expect("serialize");

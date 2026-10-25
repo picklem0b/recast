@@ -9,10 +9,11 @@
 
 pub mod rust;
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use recast_ir::{
-    Block, Callee, Expr, ExprKind, Function, ItemId, Linkage, Program, Stmt, StmtKind, Type, TypeId,
+    Block, Callee, Expr, ExprKind, Function, Linkage, Program, Stmt, StmtKind, Type, TypeId,
 };
 use rust::{Expr as RExpr, File as RFile, Fn as RFn, Stmt as RStmt};
 
@@ -76,6 +77,8 @@ struct Translator<'a> {
     program: &'a Program,
     slices: Vec<SlicePlan>,
     function: &'a str,
+    ret: TypeId,
+    assigned: BTreeSet<String>,
 }
 
 impl<'a> Translator<'a> {
@@ -107,17 +110,29 @@ impl<'a> Translator<'a> {
             });
         }
 
+        let mut assigned = BTreeSet::new();
+        if let Some(body) = &function.body {
+            collect_assigned(body, &mut assigned);
+        }
+
         Ok(Self {
             program,
             slices,
             function: &function.name,
+            ret: function.signature.ret,
+            assigned,
         })
     }
 
     fn function(&self, function: &Function) -> Result<RFn, TranslateError> {
+        let source = function
+            .body
+            .as_ref()
+            .ok_or_else(|| self.error("only function definitions are translated"))?;
+
         let mut params = Vec::new();
         for param in &function.signature.params {
-            let name = param
+            let mut name = param
                 .name
                 .clone()
                 .ok_or_else(|| self.error("a parameter has no name"))?;
@@ -130,16 +145,17 @@ impl<'a> Translator<'a> {
                 params.push((name, format!("{reference}[{element}]")));
                 continue;
             }
+            if self.assigned.contains(&name) {
+                // C parameters are mutable; Rust parameters are not unless
+                // asked, and assigning through a parameter is ordinary L0.
+                name = format!("mut {name}");
+            }
             params.push((name, self.rust_type(param.ty)?));
         }
 
         let ret = self.rust_type(function.signature.ret)?;
         let value = !is_unit(self.program, function.signature.ret);
-        let body = function
-            .body
-            .as_ref()
-            .ok_or_else(|| self.error("only function definitions are translated"))?;
-        let body = self.body(body, value)?;
+        let body = self.body(source, value)?;
         let span = &function.provenance.span;
         Ok(RFn {
             docs: vec![format!(
@@ -160,7 +176,7 @@ impl<'a> Translator<'a> {
             let last = index + 1 == block.stmts.len();
             if last && returns_value {
                 if let StmtKind::Return(Some(value)) = &stmt.kind {
-                    out.push(RStmt::Tail(self.expr(value)?));
+                    out.push(RStmt::Tail(self.value(value, self.ret)?));
                     continue;
                 }
             }
@@ -191,9 +207,10 @@ impl<'a> Translator<'a> {
         let single = match &stmt.kind {
             StmtKind::Decl { name, ty, init } => vec![RStmt::Let {
                 name: name.clone(),
+                mutable: self.assigned.contains(name),
                 ty: self.rust_type(*ty)?,
                 init: match init {
-                    Some(init) => Some(self.expr(init)?),
+                    Some(init) => Some(self.value(init, *ty)?),
                     None => None,
                 },
             }],
@@ -236,7 +253,7 @@ impl<'a> Translator<'a> {
                 out
             }
             StmtKind::Return(value) => vec![RStmt::Return(match value {
-                Some(value) => Some(self.expr(value)?),
+                Some(value) => Some(self.value(value, self.ret)?),
                 None => None,
             })],
             StmtKind::Break => vec![RStmt::Break],
@@ -274,7 +291,7 @@ impl<'a> Translator<'a> {
                         )
                     }
                 },
-                value: self.expr(rhs)?,
+                value: self.value(rhs, lhs.ty)?,
             }),
             ExprKind::Unary {
                 op,
@@ -312,13 +329,13 @@ impl<'a> Translator<'a> {
             ExprKind::Unary { op, operand, .. } => match op.as_str() {
                 "-" => Ok(RExpr::Unary {
                     op: "-",
-                    expr: Box::new(self.expr(operand)?),
+                    expr: Box::new(self.value(operand, operand.ty)?),
                 }),
                 "~" => Ok(RExpr::Unary {
                     op: "!",
-                    expr: Box::new(self.expr(operand)?),
+                    expr: Box::new(self.value(operand, operand.ty)?),
                 }),
-                "+" => self.expr(operand),
+                "+" => self.value(operand, operand.ty),
                 "!" => Ok(RExpr::Unary {
                     op: "!",
                     expr: Box::new(self.condition(operand)?),
@@ -332,15 +349,37 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Index { base, index } => {
                 let plan = self.index_plan(base)?;
-                let index = self.expr(index)?;
+                let lowered = self.value(index, index.ty)?;
+                let index_type = self.rust_type(index.ty)?;
+                let index = if index_type == "usize" {
+                    lowered
+                } else {
+                    RExpr::Cast {
+                        expr: Box::new(lowered),
+                        ty: "usize".to_string(),
+                    }
+                };
                 Ok(RExpr::Index {
                     base: Box::new(RExpr::Path(plan.pointer.clone())),
                     index: Box::new(index),
                 })
             }
             ExprKind::Call { callee, args } => {
-                let name = match callee {
-                    Callee::Direct(id) => self.function_name(id)?,
+                let (name, parameters) = match callee {
+                    Callee::Direct(id) => {
+                        let function = self.program.function(id).ok_or_else(|| {
+                            self.error(format!("call target {id} does not exist"))
+                        })?;
+                        (
+                            function.name.clone(),
+                            function
+                                .signature
+                                .params
+                                .iter()
+                                .map(|param| param.ty)
+                                .collect::<Vec<_>>(),
+                        )
+                    }
                     Callee::Indirect(_) => {
                         return Err(self.error("indirect calls are not supported"))
                     }
@@ -349,8 +388,9 @@ impl<'a> Translator<'a> {
                     }
                 };
                 let mut lowered = Vec::with_capacity(args.len());
-                for arg in args {
-                    lowered.push(self.expr(arg)?);
+                for (index, arg) in args.iter().enumerate() {
+                    let expected = parameters.get(index).copied().unwrap_or(arg.ty);
+                    lowered.push(self.value(arg, expected)?);
                 }
                 Ok(RExpr::Call {
                     callee: Box::new(RExpr::Path(name)),
@@ -386,12 +426,12 @@ impl<'a> Translator<'a> {
                     ">" => ">",
                     _ => ">=",
                 },
-                lhs: Box::new(self.expr(lhs)?),
-                rhs: Box::new(self.expr(rhs)?),
+                lhs: Box::new(self.value(lhs, lhs.ty)?),
+                rhs: Box::new(self.value(rhs, rhs.ty)?),
             }),
             "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" => {
-                let lhs_expr = self.expr(lhs)?;
-                let rhs_expr = self.expr(rhs)?;
+                let lhs_expr = self.value(lhs, lhs.ty)?;
+                let rhs_expr = self.value(rhs, rhs.ty)?;
                 if matches!(op, "+" | "-" | "*") && is_unsigned(self.program, lhs.ty) {
                     let method = match op {
                         "+" => "wrapping_add",
@@ -443,6 +483,7 @@ impl<'a> Translator<'a> {
             {
                 self.binary(op, lhs, rhs)
             }
+            ExprKind::Paren(inner) => self.condition(inner),
             ExprKind::Unary { op, operand, .. } if op == "!" => Ok(RExpr::Unary {
                 op: "!",
                 expr: Box::new(self.condition(operand)?),
@@ -458,11 +499,48 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Translate `expr` in a position that needs `expected`, inserting the
+    /// `as` cast C relies on when a comparison result is used as an integer.
+    fn value(&self, expr: &Expr, expected: TypeId) -> Result<RExpr, TranslateError> {
+        let rendered = self.expr(expr)?;
+        if self.is_boolean_expression(expr) && !is_bool(self.program, expected) {
+            let ty = self.rust_type(expected)?;
+            return Ok(RExpr::Cast {
+                expr: Box::new(rendered),
+                ty,
+            });
+        }
+        Ok(rendered)
+    }
+
+    /// Whether the expression renders as a Rust `bool`, which can differ from
+    /// its C type: comparisons have type `int` in C but produce `bool` here.
+    fn is_boolean_expression(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::BoolLit(_) => true,
+            ExprKind::Binary { op, .. } => matches!(
+                op.as_str(),
+                "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||"
+            ),
+            ExprKind::Unary { op, .. } => op == "!",
+            ExprKind::Cast { to, .. } => is_bool(self.program, *to),
+            ExprKind::Paren(inner) => self.is_boolean_expression(inner),
+            _ => is_bool(self.program, expr.ty),
+        }
+    }
+
     fn cast(&self, to: TypeId, expr: &Expr) -> Result<RExpr, TranslateError> {
         if is_bool(self.program, to) {
             return self.condition(expr);
         }
         if same_type(self.program, to, expr.ty) {
+            if self.is_boolean_expression(expr) && !is_bool(self.program, to) {
+                let target = self.rust_type(to)?;
+                return Ok(RExpr::Cast {
+                    expr: Box::new(self.expr(expr)?),
+                    ty: target,
+                });
+            }
             return self.expr(expr);
         }
         if let ExprKind::IntLit(value) = &expr.kind {
@@ -527,13 +605,6 @@ impl<'a> Translator<'a> {
         Ok(rendered)
     }
 
-    fn function_name(&self, id: &ItemId) -> Result<String, TranslateError> {
-        self.program
-            .function(id)
-            .map(|function| function.name.clone())
-            .ok_or_else(|| self.error(format!("call target {id} does not exist")))
-    }
-
     fn slice_by_pointer(&self, name: &str) -> Option<&SlicePlan> {
         self.slices.iter().find(|plan| plan.pointer == name)
     }
@@ -544,6 +615,108 @@ impl<'a> Translator<'a> {
 
     fn error(&self, message: impl Into<String>) -> TranslateError {
         TranslateError::new(self.function, message)
+    }
+}
+
+fn collect_assigned(block: &Block, names: &mut BTreeSet<String>) {
+    for stmt in &block.stmts {
+        collect_stmt_assignments(stmt, names);
+    }
+}
+
+fn collect_stmt_assignments(stmt: &Stmt, names: &mut BTreeSet<String>) {
+    match &stmt.kind {
+        StmtKind::Decl { init, .. } => {
+            if let Some(init) = init {
+                collect_expr_assignments(init, names);
+            }
+        }
+        StmtKind::Expr(expr) => collect_expr_assignments(expr, names),
+        StmtKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_assignments(cond, names);
+            collect_assigned(then_branch, names);
+            if let Some(else_branch) = else_branch {
+                collect_assigned(else_branch, names);
+            }
+        }
+        StmtKind::While { cond, body } => {
+            collect_expr_assignments(cond, names);
+            collect_assigned(body, names);
+        }
+        StmtKind::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
+            if let Some(init) = init {
+                collect_stmt_assignments(init, names);
+            }
+            if let Some(cond) = cond {
+                collect_expr_assignments(cond, names);
+            }
+            if let Some(step) = step {
+                collect_expr_assignments(step, names);
+            }
+            collect_assigned(body, names);
+        }
+        StmtKind::Return(Some(value)) => collect_expr_assignments(value, names),
+        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Empty => {}
+    }
+}
+
+fn collect_expr_assignments(expr: &Expr, names: &mut BTreeSet<String>) {
+    match &expr.kind {
+        ExprKind::Assign { lhs, rhs, .. } => {
+            if let Some(name) = local_name(lhs) {
+                names.insert(name.to_string());
+            }
+            collect_expr_assignments(lhs, names);
+            collect_expr_assignments(rhs, names);
+        }
+        ExprKind::Unary { op, operand, .. } => {
+            if op == "++" || op == "--" {
+                if let Some(name) = local_name(operand) {
+                    names.insert(name.to_string());
+                }
+            }
+            collect_expr_assignments(operand, names);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            collect_expr_assignments(lhs, names);
+            collect_expr_assignments(rhs, names);
+        }
+        ExprKind::Index { base, index } => {
+            collect_expr_assignments(base, names);
+            collect_expr_assignments(index, names);
+        }
+        ExprKind::Call { args, .. } => {
+            for arg in args {
+                collect_expr_assignments(arg, names);
+            }
+        }
+        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => {
+            collect_expr_assignments(expr, names);
+        }
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Null
+        | ExprKind::Local(_)
+        | ExprKind::Unsupported(_) => {}
+    }
+}
+
+fn local_name(expr: &Expr) -> Option<&str> {
+    match &expr.kind {
+        ExprKind::Local(name) => Some(name),
+        ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => local_name(inner),
+        _ => None,
     }
 }
 

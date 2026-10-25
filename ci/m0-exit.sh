@@ -61,6 +61,7 @@ for artifact in rust/src/lib.rs tir/program.tir; do
 done
 echo "criterion 2: two complete runs are byte-identical"
 
+rustfmt --edition 2021 --check "$work/out/rust/src/lib.rs"
 rustc --edition=2021 --crate-type=lib --crate-name recast_out \
   "$work/out/rust/src/lib.rs" -o "$work/librecast_out.rlib"
 cat >"$work/rust_harness.rs" <<'RS'

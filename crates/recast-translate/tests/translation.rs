@@ -86,6 +86,18 @@ fn unsigned_arithmetic_wraps_explicitly() {
 }
 
 #[test]
+fn mutable_parameters_and_c_comparison_values_compile() {
+    let generated = source(include_str!("../../../tests/fixtures/ast/integer.json"));
+    assert!(
+        generated.contains("pub fn count_down(mut n: i32) -> i32"),
+        "{generated}"
+    );
+    assert!(generated.contains("(x < 3) as i32"), "{generated}");
+    assert!(generated.contains("(x > 0 && y > 0) as i32"), "{generated}");
+    compile(&generated).expect("generated Rust compiles");
+}
+
+#[test]
 fn translation_is_deterministic() {
     let json = include_str!("../../../tests/fixtures/ast/sum.json");
     assert_eq!(source(json), source(json));
