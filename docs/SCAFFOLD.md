@@ -64,7 +64,7 @@ The files below are the first ones to create in v1.1.x, in this order within eac
 
 ## Dependency direction
 
-The Cargo graph is the acyclic graph in `docs/03-architecture.md` section 4. A crate may depend only on crates to its left in this list:
+The Cargo graph is the acyclic graph in `docs/03-architecture.md` section 4. The list below is the stage order used to read the tree; it is not a blanket permission to add an edge. Every dependency must appear in that section. If a manifest needs an edge not shown there, record an ADR before adding it.
 
 ```
 recast-schema
