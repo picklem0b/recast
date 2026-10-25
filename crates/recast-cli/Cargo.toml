@@ -10,3 +10,8 @@ name = "recast"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+recast-schema = { path = "../recast-schema" }
+recast-ir = { path = "../recast-ir" }
+recast-frontend = { path = "../recast-frontend" }
+recast-translate = { path = "../recast-translate" }
