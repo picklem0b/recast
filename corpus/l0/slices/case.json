@@ -1,0 +1,99 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "sum",
+      "args": [
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ]
+    },
+    {
+      "function": "sum",
+      "args": [
+        [
+          -5,
+          5,
+          -10
+        ]
+      ]
+    },
+    {
+      "function": "first_negative",
+      "args": [
+        [
+          1,
+          0,
+          -2,
+          3
+        ]
+      ]
+    },
+    {
+      "function": "first_negative",
+      "args": [
+        [
+          1,
+          2,
+          3
+        ]
+      ]
+    },
+    {
+      "function": "count_char",
+      "args": [
+        "banana"
+      ]
+    },
+    {
+      "function": "dot",
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5,
+          6
+        ]
+      ]
+    },
+    {
+      "function": "sum",
+      "args": [
+        []
+      ]
+    },
+    {
+      "function": "first_negative",
+      "args": [
+        []
+      ]
+    },
+    {
+      "function": "count_char",
+      "args": [
+        ""
+      ]
+    },
+    {
+      "function": "dot",
+      "args": [
+        [],
+        []
+      ]
+    },
+    {
+      "function": "count_char",
+      "args": [
+        "a"
+      ]
+    }
+  ]
+}

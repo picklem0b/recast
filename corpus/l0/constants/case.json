@@ -1,0 +1,45 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "capped",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "capped",
+      "args": [
+        30
+      ]
+    },
+    {
+      "function": "stepped",
+      "args": [
+        4
+      ]
+    },
+    {
+      "function": "loop_to_limit",
+      "args": []
+    },
+    {
+      "function": "capped",
+      "args": [
+        10
+      ]
+    },
+    {
+      "function": "capped",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "stepped",
+      "args": [
+        0
+      ]
+    }
+  ]
+}

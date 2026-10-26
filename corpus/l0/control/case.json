@@ -1,0 +1,153 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "classify",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "classify",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "classify",
+      "args": [
+        2
+      ]
+    },
+    {
+      "function": "classify",
+      "args": [
+        9
+      ]
+    },
+    {
+      "function": "classify",
+      "args": [
+        -4
+      ]
+    },
+    {
+      "function": "sign",
+      "args": [
+        -8
+      ]
+    },
+    {
+      "function": "sign",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "sign",
+      "args": [
+        5
+      ]
+    },
+    {
+      "function": "clamp",
+      "args": [
+        5,
+        0,
+        10
+      ]
+    },
+    {
+      "function": "clamp",
+      "args": [
+        -5,
+        0,
+        10
+      ]
+    },
+    {
+      "function": "clamp",
+      "args": [
+        50,
+        0,
+        10
+      ]
+    },
+    {
+      "function": "count_down",
+      "args": [
+        5
+      ]
+    },
+    {
+      "function": "count_down",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "do_sum",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "do_sum",
+      "args": [
+        4
+      ]
+    },
+    {
+      "function": "label_value",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "label_value",
+      "args": [
+        30
+      ]
+    },
+    {
+      "function": "clamp",
+      "args": [
+        0,
+        0,
+        10
+      ]
+    },
+    {
+      "function": "clamp",
+      "args": [
+        10,
+        0,
+        10
+      ]
+    },
+    {
+      "function": "count_down",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "count_down",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "label_value",
+      "args": [
+        10
+      ]
+    },
+    {
+      "function": "do_sum",
+      "args": [
+        1
+      ]
+    }
+  ]
+}

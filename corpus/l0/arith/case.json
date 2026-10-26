@@ -1,0 +1,135 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "add",
+      "args": [
+        2,
+        3
+      ]
+    },
+    {
+      "function": "add",
+      "args": [
+        -7,
+        4
+      ]
+    },
+    {
+      "function": "sub",
+      "args": [
+        10,
+        25
+      ]
+    },
+    {
+      "function": "mul",
+      "args": [
+        -6,
+        7
+      ]
+    },
+    {
+      "function": "div_mod",
+      "args": [
+        17,
+        5
+      ]
+    },
+    {
+      "function": "div_mod",
+      "args": [
+        -17,
+        5
+      ]
+    },
+    {
+      "function": "shift_mix",
+      "args": [
+        3,
+        8
+      ]
+    },
+    {
+      "function": "wrap_add",
+      "args": [
+        4294967295,
+        2
+      ]
+    },
+    {
+      "function": "wrap_sub",
+      "args": [
+        0,
+        1
+      ]
+    },
+    {
+      "function": "wrap_mul",
+      "args": [
+        4294967295,
+        3
+      ]
+    },
+    {
+      "function": "negate",
+      "args": [
+        42
+      ]
+    },
+    {
+      "function": "bit_mix",
+      "args": [
+        305419896
+      ]
+    },
+    {
+      "function": "min_int",
+      "args": [
+        4,
+        -9
+      ]
+    },
+    {
+      "function": "min_int",
+      "args": [
+        5,
+        5
+      ]
+    },
+    {
+      "function": "min_int",
+      "args": [
+        -3,
+        -3
+      ]
+    },
+    {
+      "function": "negate",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "div_mod",
+      "args": [
+        -8,
+        -2
+      ]
+    }
+  ],
+  "sweeps": [
+    {
+      "function": "add",
+      "iterations": 1000000
+    },
+    {
+      "function": "mul",
+      "iterations": 1000000
+    },
+    {
+      "function": "wrap_add",
+      "iterations": 1000000
+    }
+  ]
+}

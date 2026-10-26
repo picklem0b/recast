@@ -1,0 +1,96 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "make_point",
+      "args": [
+        3,
+        -4
+      ]
+    },
+    {
+      "function": "manhattan",
+      "args": [
+        {
+          "x": -3,
+          "y": 4
+        }
+      ]
+    },
+    {
+      "function": "origin",
+      "args": []
+    },
+    {
+      "function": "rect_area",
+      "args": [
+        {
+          "origin": {
+            "x": 1,
+            "y": 2
+          },
+          "corner": {
+            "x": 5,
+            "y": 7
+          }
+        }
+      ]
+    },
+    {
+      "function": "make_rect",
+      "args": [
+        0,
+        0,
+        4,
+        3
+      ]
+    },
+    {
+      "function": "field_sum",
+      "args": [
+        {
+          "x": 1,
+          "y": 2
+        },
+        {
+          "x": 3,
+          "y": 4
+        }
+      ]
+    },
+    {
+      "function": "manhattan",
+      "args": [
+        {
+          "x": 0,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "function": "manhattan",
+      "args": [
+        {
+          "x": 3,
+          "y": 0
+        }
+      ]
+    },
+    {
+      "function": "manhattan",
+      "args": [
+        {
+          "x": 0,
+          "y": -4
+        }
+      ]
+    },
+    {
+      "function": "make_point",
+      "args": [
+        0,
+        0
+      ]
+    }
+  ]
+}
