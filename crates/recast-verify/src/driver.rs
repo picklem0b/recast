@@ -129,6 +129,15 @@ pub(crate) fn arguments(
 
     for (index, param) in params.iter().enumerate() {
         if Some(index) == length_index {
+            // The C parameter list keeps the length in its own position, so
+            // the derived value goes here, not at the end of the call.
+            let len = slice_len.ok_or_else(|| {
+                Error::Case(format!(
+                    "{} has a length parameter with no slice before it",
+                    function.name
+                ))
+            })?;
+            c_args.push(len.to_string());
             continue;
         }
         let value = values.get(used).ok_or_else(|| {
@@ -164,9 +173,6 @@ pub(crate) fn arguments(
             function.name,
             values.len()
         )));
-    }
-    if let Some(len) = slice_len {
-        c_args.push(len.to_string());
     }
     Ok((c_args, r_args))
 }
