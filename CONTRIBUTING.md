@@ -36,4 +36,4 @@ Tag only when the state is reproducible: the documents and paths are consistent,
 - Keep functions and modules named for the job they do.
 - Put tests next to the code they cover in the project's idiomatic layout.
 - A translation or analysis rule needs its rule ID, a worked example and a golden test before it is considered implemented.
-- When a document is ambiguous, choose the recommended default from `docs/12-risks-decisions-open-questions.md`, record the choice, and continue.
+- When a document is ambiguous, choose the recommended default from `docs/project/decisions-and-risks.md`, record the choice, and continue.

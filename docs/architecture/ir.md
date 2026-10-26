@@ -41,7 +41,7 @@ MacroFrame {
 }
 ```
 
-`ConfigCondition` is a boolean formula over **configuration atoms**, such as `defined(USE_FAST)`, `__linux__`, `VERSION >= 3`. `true` means unconditional. See `05-analysis-specification.md` section 6.
+`ConfigCondition` is a boolean formula over **configuration atoms**, such as `defined(USE_FAST)`, `__linux__`, `VERSION >= 3`. `true` means unconditional. See `docs/architecture/analysis.md` section 6.
 
 ### 1.3 Target description
 
@@ -379,4 +379,4 @@ facts:
   tier_hint[sum]  = T0
 ```
 
-This is the form that flows into translation, which then emits `pub fn sum(a: &[i32]) -> i32` (see `14-worked-examples.md`, example 2).
+This is the form that flows into translation, which then emits `pub fn sum(a: &[i32]) -> i32` (see `docs/reference/worked-examples.md`, example 2).

@@ -2,7 +2,7 @@
 
 Translation turns TIR plus analysis facts into a Rust crate. This document defines the memory-strategy tiers, every mapping rule family, the runtime support crate, the output layout, and the idiom pass.
 
-Status: Tiers T0 to T4 and the rules below are **Specified**. Generic recovery (section 12) is **Research-grade**. Concrete input/output pairs for every rule family are in `14-worked-examples.md`.
+Status: Tiers T0 to T4 and the rules below are **Specified**. Generic recovery (section 12) is **Research-grade**. Concrete input/output pairs for every rule family are in `docs/reference/worked-examples.md`.
 
 ---
 
@@ -217,7 +217,7 @@ Default argument expressions are inlined at each call site (faithful, simple). T
 
 ### 6.7 Recursion and stack
 
-Recursive functions translate directly. The report notes recursion depth risks; Rust's stack limit is not larger than C++'s, so no new risk is introduced, but deeply recursive `Drop` on long singly-linked lists is a known hazard in Rust: generated `Drop` implementations for recursive owning structures MUST be iterative (see example 3 in `14-worked-examples.md`).
+Recursive functions translate directly. The report notes recursion depth risks; Rust's stack limit is not larger than C++'s, so no new risk is introduced, but deeply recursive `Drop` on long singly-linked lists is a known hazard in Rust: generated `Drop` implementations for recursive owning structures MUST be iterative (see example 3 in `docs/reference/worked-examples.md`).
 
 ---
 
@@ -591,4 +591,4 @@ For every item and every tier decision, write a JSON record under `explain/`:
 | `IDM-nnn`                     | Idiom pass                                 |
 | `OWN-`, `NUL-`, `ARR-`, `UB-` | Analysis rules (document 05)               |
 
-Every rule in the rule table MUST have an entry in `14-worked-examples.md` or a test that demonstrates it.
+Every rule in the rule table MUST have an entry in `docs/reference/worked-examples.md` or a test that demonstrates it.

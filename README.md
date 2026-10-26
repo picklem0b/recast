@@ -4,17 +4,19 @@
 
 ## Status
 
-**M0 complete.** The nine build points are tagged `v1.0.1` to `v1.0.9`, `v1.0.10` records the three exit criteria, and `v1.0.11` carries the audit repairs. The audit and its remaining limits are in [`docs/AUDIT-M0.md`](docs/AUDIT-M0.md). `ci/m0-exit.sh` checks them: `add` and `sum` cross C to compiling Rust and agree with the C at runtime, two complete runs are byte-identical, and the exported schema round-trips. The sixteen foundation documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
+**M1 complete.** The M0 slice is tagged `v1.0.1` to `v1.0.11`; the M1 work is not yet tagged. [`docs/audits/m0.md`](docs/audits/m0.md) and [`docs/audits/m1.md`](docs/audits/m1.md) record the checks and remaining limits. `ci/m0-exit.sh` checks the original vertical slice, and `ci/m1-exit.sh` runs the L0 corpus: 7 cases, 90 differential calls, three 10^6-iteration property sweeps and operator mutation, all passing. The specification documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
 
-M0 proves the vertical slice, not the product. It translates scalar functions and the `const int *, size_t` slice pattern to safe Rust that compiles. Records, macros, heap ownership and the verification ladder start at M1 and M2.
+M1 translates scalars, control flow, structs by value, fixed arrays, string literals, enums and constants to safe Rust at T0, and verifies each corpus case against its C original. Heap ownership, macros, interop and the safety gate start at M2 and later milestones.
 
 ## What works now
 
 - **Exporter** (`exporter/`): Clang LibTooling reads `compile_commands.json` and writes `recast-ast/1`, including target facts and typed function bodies for the L0 subset.
 - **Frontend** (`recast-frontend`): lowers the export to TIR with interned types, stable item and node identifiers, explicit implicit casts and a canonical dump.
 - **Validator** (`recast-ir`): enforces the M0 invariants from document 04 and reports every violation with a path.
+- **Analysis** (`recast-analysis`): derives a CFG, runs liveness and definite-assignment checks, and reports the M1 undefined-behavior rules (`UB-001`, `UB-005`, `UB-007`, `UB-008`).
 - **Translation** (`recast-translate`): emits Rust through a typed syntax tree, wrapping unsigned arithmetic explicitly and turning a pointer plus `size_t` pair into a slice only when the pointer is indexed and the length is only a length.
-- **CLI** (`recast`): `init`, `export`, `analyze`, `translate`, `version` and `doctor`, with the documented exit codes.
+- **Verification** (`recast-verify`): V0 compilation, V2 differential execution against the C original, deterministic property sweeps and operator mutation testing.
+- **CLI** (`recast`): `init`, `export`, `analyze`, `translate`, `verify`, `version` and `doctor`, with the documented exit codes.
 - **Tests** (`recast-testkit`, `xtask`): snippet harness, golden runner, `xtask bless`, and CI that builds the generated crate and compares two runs byte for byte.
 
 ## Example
@@ -31,6 +33,7 @@ becomes:
 
 ```rust
 #![forbid(unsafe_code)]
+#![allow(dead_code, non_camel_case_types, non_snake_case)]
 
 /// recast: translated from input.c:3
 pub fn sum(a: &[i32]) -> i32 {
@@ -38,7 +41,7 @@ pub fn sum(a: &[i32]) -> i32 {
     let mut i: usize = 0;
     while i < a.len() {
         s += a[i];
-        i += 1;
+        i = i.wrapping_add(1);
     }
     s
 }
@@ -63,6 +66,8 @@ cargo run -p recast-cli -- export --compdb build/compile_commands.json \
   --exporter exporter/build/recast-exporter
 cargo run -p recast-cli -- analyze
 cargo run -p recast-cli -- translate
+cargo run -p recast-cli -- verify --case corpus/l0/slices/case.json \
+  --source corpus/l0/slices/source.c
 ```
 
 `recast translate` writes a compiling crate to `recast-out/rust/`. `recast doctor` names every tool it checks and the fix for a missing one.
@@ -71,20 +76,20 @@ cargo run -p recast-cli -- translate
 
 | Path                | Purpose                                                      |
 | ------------------- | ------------------------------------------------------------ |
-| `docs/`             | Foundation specification, review and scaffold                |
-| `crates/`           | Rust workspace: schema, IR, frontend, translate, CLI, testkit |
+| `docs/`             | Specification, architecture, guides, project records and audits |
+| `crates/`           | Rust workspace: schema, IR, frontend, analysis, translate, verify, CLI, testkit |
 | `exporter/`         | C++ Clang LibTooling exporter                                |
-| `ci/`               | Fast pipeline, exporter pipeline and documentation checks    |
+| `ci/`               | Fast pipeline, M0/M1 exit checks and documentation checks    |
 | `tests/golden/`     | C input, exported AST and expected Rust                      |
-| `tests/fixtures/`   | C fixtures and their exported AST                            |
+| `tests/fixtures/`   | Shared C fixtures and their exported AST                     |
+| `corpus/l0/`        | Committed L0 evaluation programs and case descriptions       |
 | `models/`           | Library models for libc, POSIX and C++, from M2              |
-| `corpus/`           | Pinned external projects, fetched not committed              |
 | `benchmarks/`       | Overhead measurement protocol and manifests                  |
 | `xtask/`            | Workspace automation and golden blessing                     |
 
 ## Documentation
 
-Start with [`docs/00-README.md`](docs/00-README.md) (index, conventions, status). If you are building recast, read [`docs/15-builder-brief.md`](docs/15-builder-brief.md) next. The critical review is [`docs/REVIEW.md`](docs/REVIEW.md) and the v1.0 structure is [`docs/SCAFFOLD.md`](docs/SCAFFOLD.md).
+Start with [`docs/README.md`](docs/README.md) for the index, conventions and status. Implementation work should then read [`docs/guides/implementation.md`](docs/guides/implementation.md). The critical review is [`docs/project/review-v1.md`](docs/project/review-v1.md) and the repository layout is [`docs/architecture/repository-layout.md`](docs/architecture/repository-layout.md).
 
 ## Contributing
 
