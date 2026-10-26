@@ -1,10 +1,12 @@
 //! Definite assignment (UB-005).
 //!
 //! The analysis is a forward must-analysis over the structured tree. It reports
-//! reads of locals that are not assigned on every path that reaches them. It is
-//! deliberately conservative at loop and switch joins: a variable assigned in a
-//! loop body is not assumed assigned after the loop, except for `do-while`,
-//! which runs its body at least once.
+//! reads of locals that are not assigned on every path that reaches them. A
+//! statement that cannot fall through, such as `return`, `break` or `continue`,
+//! ends the path it sits on, so the assignments of that path are not required
+//! at the join. The analysis is deliberately conservative at loop joins: a
+//! variable assigned in a loop body is not assumed assigned after the loop,
+//! except for `do-while`, which runs its body at least once.
 
 use std::collections::BTreeSet;
 
@@ -28,7 +30,7 @@ pub fn check(function: &Function, program: &recast_ir::Program, findings: &mut V
             assigned.insert(name.clone());
         }
     }
-    checker.block(body, &mut assigned, &function.provenance.span);
+    let _ = checker.block(body, &mut assigned, &function.provenance.span);
 }
 
 struct Checker<'a> {
@@ -43,13 +45,21 @@ impl Checker<'_> {
             .push(Finding::new("UB-005", self.function, span.clone(), message));
     }
 
-    fn block(&mut self, block: &Block, assigned: &mut BTreeSet<String>, span: &Span) {
+    /// Analyze the statements in order and report whether control can reach the
+    /// end of the block. Statements after one that cannot fall through are
+    /// unreachable, so they are not analyzed.
+    fn block(&mut self, block: &Block, assigned: &mut BTreeSet<String>, span: &Span) -> bool {
         for stmt in &block.stmts {
-            self.stmt(stmt, assigned, span);
+            if !self.stmt(stmt, assigned, span) {
+                return false;
+            }
         }
+        true
     }
 
-    fn stmt(&mut self, stmt: &Stmt, assigned: &mut BTreeSet<String>, span: &Span) {
+    /// Analyze one statement and report whether it can fall through to the
+    /// statement that follows it.
+    fn stmt(&mut self, stmt: &Stmt, assigned: &mut BTreeSet<String>, span: &Span) -> bool {
         let span = if stmt.provenance.span.line > 0 {
             &stmt.provenance.span
         } else {
@@ -64,10 +74,12 @@ impl Checker<'_> {
                     // `int x;` leaves x indeterminate in C.
                     assigned.remove(name);
                 }
+                true
             }
             StmtKind::Expr(expr) => {
                 self.expr(expr, assigned, span);
                 apply_defs(expr, assigned);
+                true
             }
             StmtKind::If {
                 cond,
@@ -77,23 +89,34 @@ impl Checker<'_> {
                 self.expr(cond, assigned, span);
                 let entry = assigned.clone();
                 let mut then_assigned = entry.clone();
-                self.block(then_branch, &mut then_assigned, span);
+                let then_falls = self.block(then_branch, &mut then_assigned, span);
                 let mut else_assigned = entry.clone();
-                if let Some(else_branch) = else_branch {
-                    self.block(else_branch, &mut else_assigned, span);
-                }
-                *assigned = then_assigned
-                    .intersection(&else_assigned)
-                    .cloned()
-                    .collect();
+                let else_falls = match else_branch {
+                    Some(else_branch) => self.block(else_branch, &mut else_assigned, span),
+                    None => true,
+                };
+                // Only the paths that reach the join constrain the merge. A
+                // branch that returns or breaks cannot carry an unassigned
+                // variable to the statements that follow the `if`.
+                *assigned = match (then_falls, else_falls) {
+                    (true, true) => then_assigned
+                        .intersection(&else_assigned)
+                        .cloned()
+                        .collect(),
+                    (true, false) => then_assigned,
+                    (false, true) => else_assigned,
+                    (false, false) => entry,
+                };
+                then_falls || else_falls
             }
             StmtKind::While { cond, body } => {
                 self.expr(cond, assigned, span);
                 let entry = assigned.clone();
                 let mut body_assigned = entry.clone();
-                self.block(body, &mut body_assigned, span);
+                let _ = self.block(body, &mut body_assigned, span);
                 // The body may run zero times.
                 *assigned = entry;
+                true
             }
             StmtKind::For {
                 init,
@@ -109,18 +132,20 @@ impl Checker<'_> {
                 }
                 let entry = assigned.clone();
                 let mut body_assigned = entry.clone();
-                self.block(body, &mut body_assigned, span);
+                let _ = self.block(body, &mut body_assigned, span);
                 if let Some(step) = step {
                     self.expr(step, &body_assigned, span);
                 }
                 *assigned = entry;
+                true
             }
             StmtKind::DoWhile { body, cond } => {
                 let entry = assigned.clone();
                 let mut body_assigned = entry.clone();
-                self.block(body, &mut body_assigned, span);
+                let _ = self.block(body, &mut body_assigned, span);
                 self.expr(cond, &body_assigned, span);
                 *assigned = entry.union(&body_assigned).cloned().collect();
+                true
             }
             StmtKind::Switch { scrutinee, cases } => {
                 self.expr(scrutinee, assigned, span);
@@ -129,7 +154,11 @@ impl Checker<'_> {
                 let mut exit: Option<BTreeSet<String>> = None;
                 for case in cases {
                     let mut case_assigned = entry.clone();
-                    self.block(&case.body, &mut case_assigned, span);
+                    let falls = self.block(&case.body, &mut case_assigned, span);
+                    if !falls {
+                        // A case that returns or breaks leaves the switch.
+                        continue;
+                    }
                     exit = Some(match exit {
                         Some(intersection) => {
                             intersection.intersection(&case_assigned).cloned().collect()
@@ -143,14 +172,17 @@ impl Checker<'_> {
                         None => entry.clone(),
                     });
                 }
-                *assigned = exit.unwrap_or(entry);
+                *assigned = exit.unwrap_or_else(|| entry.clone());
+                true
             }
             StmtKind::Return(value) => {
                 if let Some(value) = value {
                     self.expr(value, assigned, span);
                 }
+                false
             }
-            StmtKind::Break | StmtKind::Continue | StmtKind::Empty => {}
+            StmtKind::Break | StmtKind::Continue => false,
+            StmtKind::Empty => true,
         }
     }
 
