@@ -42,6 +42,7 @@ fn add_translates_to_a_checked_function() {
         generated,
         "\
 #![forbid(unsafe_code)]
+#![allow(dead_code, non_camel_case_types, non_snake_case)]
 
 /// recast: translated from tests/fixtures/add.c:1
 pub fn add(a: i32, b: i32) -> i32 {
@@ -59,6 +60,7 @@ fn sum_collapses_the_pointer_and_length_pair() {
         generated,
         "\
 #![forbid(unsafe_code)]
+#![allow(dead_code, non_camel_case_types, non_snake_case)]
 
 /// recast: translated from tests/fixtures/sum.c:3
 pub fn sum(a: &[i32]) -> i32 {
@@ -66,7 +68,7 @@ pub fn sum(a: &[i32]) -> i32 {
     let mut i: usize = 0;
     while i < a.len() {
         s += a[i];
-        i += 1;
+        i = i.wrapping_add(1);
     }
     s
 }
