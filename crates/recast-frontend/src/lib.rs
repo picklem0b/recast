@@ -1,19 +1,21 @@
 //! Lowering from the exporter schema to TIR.
 //!
-//! M0 accepts the L0 subset: scalar and pointer types, functions with a body,
-//! declarations, assignments, calls, `if`, `while` and `for`. Anything outside
-//! that subset is rejected by schema validation before it reaches this crate.
+//! M1 accepts the L0 subset: scalar, pointer, array and record types, structs,
+//! enums, constants, functions with a body, and the full statement set except
+//! `goto`. Anything outside that subset is rejected by schema validation
+//! before it reaches this crate.
 //!
 //! Lowering is deterministic. Source files are sorted by path, functions by
 //! name, and node identifiers are handed out in pre-order per function, so the
 //! same export always produces the same program and the same dump.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use recast_ir::{
-    Block, Callee, Endian, Expr, ExprKind, FnSig, Function, ItemId, Linkage, NodeId, Param,
-    Program, Provenance, Span, Stmt, StmtKind, Target, Type, TypeId, ValueCategory,
+    Block, Callee, Case, Endian, EnumDef, Enumerator, Expr, ExprKind, FieldDef, FnSig, Function,
+    Global, ItemId, Linkage, NodeId, Param, Program, Provenance, RecordDef, Span, Stmt, StmtKind,
+    Target, Type, TypeId, ValueCategory,
 };
 use recast_schema as schema;
 
@@ -66,15 +68,37 @@ pub fn lower(ast: &schema::Ast) -> Result<Program, FrontendError> {
     }
     functions.sort_by(|left, right| left.0.name.cmp(&right.0.name));
 
+    // Records and enums are interned before any function so field and
+    // parameter types can name them, and globals before functions so bodies
+    // can refer to constants.
+    let mut lowerer = Lowerer {
+        program,
+        items: BTreeMap::new(),
+        globals: BTreeMap::new(),
+        enumerators: BTreeMap::new(),
+        locals: BTreeSet::new(),
+    };
+
+    for unit in &ast.translation_units {
+        for record in &unit.records {
+            lowerer.lower_record(record, &unit.file)?;
+        }
+        for item in &unit.enums {
+            lowerer.lower_enum(item, &unit.file)?;
+        }
+    }
+    for unit in &ast.translation_units {
+        for global in &unit.globals {
+            lowerer.lower_global(global, &unit.file)?;
+        }
+    }
+
     let mut items = BTreeMap::new();
     for (function, _) in &functions {
         items.insert(function.name.clone(), ItemId::function(&function.name));
     }
+    lowerer.items = items.clone();
 
-    let mut lowerer = Lowerer {
-        program,
-        items: items.clone(),
-    };
     let mut lowered = Vec::with_capacity(functions.len());
     for (function, file) in &functions {
         lowered.push(lowerer.lower_function(function, file, &items[&function.name])?);
@@ -113,9 +137,100 @@ fn lower_target(target: &schema::Target) -> Result<Target, FrontendError> {
 struct Lowerer {
     program: Program,
     items: BTreeMap<String, ItemId>,
+    globals: BTreeMap<String, ItemId>,
+    enumerators: BTreeMap<String, (ItemId, i64)>,
+    locals: BTreeSet<String>,
 }
 
 impl Lowerer {
+    fn lower_record(&mut self, record: &schema::Record, file: &str) -> Result<(), FrontendError> {
+        let id = ItemId::record(&record.name);
+        self.items.insert(record.name.clone(), id.clone());
+        let name = record.name.clone();
+        // Intern the record type before its fields so a field may name it.
+        self.program
+            .types
+            .intern(Type::Record { name: name.clone() });
+        let mut fields = Vec::with_capacity(record.fields.len());
+        for field in &record.fields {
+            fields.push(FieldDef {
+                name: field.name.clone(),
+                ty: self.lower_type(&field.ty),
+            });
+        }
+        self.program.records.push(RecordDef {
+            id,
+            name,
+            fields,
+            size: record.size,
+            align: record.align,
+            provenance: Provenance::source(span_of_raw(&record.span, file)),
+        });
+        Ok(())
+    }
+
+    fn lower_enum(&mut self, item: &schema::EnumDef, file: &str) -> Result<(), FrontendError> {
+        let id = ItemId::enumerated(&item.name);
+        self.items.insert(item.name.clone(), id.clone());
+        self.program.types.intern(Type::Enum {
+            name: item.name.clone(),
+        });
+        let underlying = self.lower_type(&item.underlying);
+        let mut variants = Vec::with_capacity(item.variants.len());
+        for variant in &item.variants {
+            self.enumerators
+                .insert(variant.name.clone(), (id.clone(), variant.value));
+            variants.push(Enumerator {
+                name: variant.name.clone(),
+                value: variant.value,
+            });
+        }
+        self.program.enums.push(EnumDef {
+            id,
+            name: item.name.clone(),
+            underlying,
+            variants,
+            provenance: Provenance::source(span_of_raw(&item.span, file)),
+        });
+        Ok(())
+    }
+
+    fn lower_global(&mut self, global: &schema::Global, file: &str) -> Result<(), FrontendError> {
+        let id = ItemId::global(&global.name);
+        self.globals.insert(global.name.clone(), id.clone());
+        let ty = self.lower_type(&global.ty);
+        let linkage = match global.linkage.as_str() {
+            "external" => Linkage::External,
+            "internal" => Linkage::Internal,
+            other => {
+                return Err(FrontendError::new(
+                    format!("globals[{}].linkage", global.name),
+                    format!("unknown linkage {other}"),
+                ))
+            }
+        };
+        let init = match &global.init {
+            Some(init) => {
+                let saved = std::mem::take(&mut self.locals);
+                let mut nodes = NodeIds::new(id.clone());
+                let lowered = self.lower_expr(init, &mut nodes);
+                self.locals = saved;
+                Some(lowered?)
+            }
+            None => None,
+        };
+        self.program.globals.push(Global {
+            id,
+            name: global.name.clone(),
+            ty,
+            init,
+            is_const: global.is_const,
+            linkage,
+            provenance: Provenance::source(span_of_raw(&global.span, file)),
+        });
+        Ok(())
+    }
+
     fn lower_function(
         &mut self,
         function: &schema::Function,
@@ -124,7 +239,11 @@ impl Lowerer {
     ) -> Result<Function, FrontendError> {
         let ret = self.lower_type(&function.return_type);
         let mut params = Vec::with_capacity(function.params.len());
+        self.locals.clear();
         for param in &function.params {
+            if let Some(name) = &param.name {
+                self.locals.insert(name.clone());
+            }
             params.push(Param {
                 name: param.name.clone(),
                 ty: self.lower_type(&param.ty),
@@ -193,6 +312,12 @@ impl Lowerer {
                     is_const: *pointee_const,
                 }
             }
+            schema::Ty::Array { elem, len } => {
+                let elem = self.lower_type(elem);
+                Type::Array { elem, len: *len }
+            }
+            schema::Ty::Record { name } => Type::Record { name: name.clone() },
+            schema::Ty::Enum { name } => Type::Enum { name: name.clone() },
             schema::Ty::Named { name, canonical } => {
                 let canonical = self.lower_type(canonical);
                 if name == "size_t" {
@@ -270,12 +395,49 @@ impl Lowerer {
                     Some(init) => Some(self.lower_expr(init, nodes)?),
                     None => None,
                 };
+                self.locals.insert(name.clone());
                 (
                     id,
                     StmtKind::Decl {
                         name: name.clone(),
                         ty,
                         init,
+                    },
+                    span,
+                )
+            }
+            schema::Stmt::Break { span } => (nodes.next(), StmtKind::Break, span),
+            schema::Stmt::Continue { span } => (nodes.next(), StmtKind::Continue, span),
+            schema::Stmt::DoWhile { body, cond, span } => {
+                let id = nodes.next();
+                let body = self.lower_block(body, file, nodes)?;
+                let cond = self.lower_condition(cond, nodes)?;
+                (id, StmtKind::DoWhile { body, cond }, span)
+            }
+            schema::Stmt::Switch {
+                scrutinee,
+                cases,
+                span,
+            } => {
+                let id = nodes.next();
+                let scrutinee = self.lower_expr(scrutinee, nodes)?;
+                let mut lowered = Vec::with_capacity(cases.len());
+                for case in cases {
+                    let mut body = Block::default();
+                    for child in &case.stmts {
+                        self.lower_into(&mut body, child, file, nodes)?;
+                    }
+                    lowered.push(Case {
+                        label: case.label,
+                        body,
+                        falls_through: case.falls_through,
+                    });
+                }
+                (
+                    id,
+                    StmtKind::Switch {
+                        scrutinee,
+                        cases: lowered,
                     },
                     span,
                 )
@@ -369,6 +531,118 @@ impl Lowerer {
         }))
     }
 
+    /// The size of an exported type under the target, for `sizeof` nodes that
+    /// the exporter did not pre-resolve.
+    fn schema_type_size(&self, ty: &schema::Ty) -> Option<u64> {
+        match ty {
+            schema::Ty::Bool => Some(1),
+            schema::Ty::Int { bits, .. } => Some(u64::from(*bits) / 8),
+            schema::Ty::Float { bits, .. } => Some(u64::from(*bits) / 8),
+            schema::Ty::Pointer { .. } => Some(u64::from(self.program.target.pointer_bits) / 8),
+            schema::Ty::Array { elem, len } => self.schema_type_size(elem).map(|size| size * len),
+            schema::Ty::Record { name } => self.program.record(name).map(|record| record.size),
+            schema::Ty::Enum { name } => self
+                .program
+                .enum_named(name)
+                .and_then(|item| self.program.types.get(item.underlying).cloned())
+                .and_then(|underlying| match underlying {
+                    Type::Int { bits, .. } => Some(u64::from(bits) / 8),
+                    _ => None,
+                }),
+            schema::Ty::Named { canonical, .. } => self.schema_type_size(canonical),
+            schema::Ty::Void | schema::Ty::Unknown { .. } => None,
+        }
+    }
+
+    /// Lower an initializer list, padding omitted elements with zero the way C
+    /// does. Validation then sees a fully populated aggregate.
+    fn lower_init_list(
+        &mut self,
+        target: TypeId,
+        elems: &[schema::Expr],
+        nodes: &mut NodeIds,
+    ) -> Result<ExprKind, FrontendError> {
+        let mut lowered = Vec::with_capacity(elems.len());
+        for elem in elems {
+            lowered.push(self.lower_expr(elem, nodes)?);
+        }
+        match self.program.types.get(target).cloned() {
+            Some(Type::Array { elem, len }) => {
+                if lowered.len() as u64 > len {
+                    return Err(FrontendError::new(
+                        "<initializer>",
+                        format!(
+                            "array initializer has {} elements but the array holds {len}",
+                            lowered.len()
+                        ),
+                    ));
+                }
+                while (lowered.len() as u64) < len {
+                    lowered.push(self.zero_literal(elem, nodes)?);
+                }
+            }
+            Some(Type::Record { name }) => {
+                let fields = self
+                    .program
+                    .record(&name)
+                    .map(|record| {
+                        record
+                            .fields
+                            .iter()
+                            .map(|field| field.ty)
+                            .collect::<Vec<_>>()
+                    })
+                    .ok_or_else(|| {
+                        FrontendError::new("<initializer>", format!("record {name} is not defined"))
+                    })?;
+                if lowered.len() > fields.len() {
+                    return Err(FrontendError::new(
+                        "<initializer>",
+                        format!(
+                            "record {name} has {} fields but the initializer has {}",
+                            fields.len(),
+                            lowered.len()
+                        ),
+                    ));
+                }
+                for ty in fields.iter().skip(lowered.len()) {
+                    lowered.push(self.zero_literal(*ty, nodes)?);
+                }
+            }
+            _ => {
+                return Err(FrontendError::new(
+                    "<initializer>",
+                    "an initializer list needs a record or array type",
+                ))
+            }
+        }
+        Ok(ExprKind::InitList(lowered))
+    }
+
+    fn zero_literal(&mut self, ty: TypeId, nodes: &mut NodeIds) -> Result<Expr, FrontendError> {
+        let id = nodes.next();
+        let kind = match self.program.types.canonical(ty) {
+            Some(Type::Float { .. }) => ExprKind::FloatLit(0.0),
+            Some(Type::Bool) => ExprKind::BoolLit(false),
+            Some(Type::Int { .. }) | Some(Type::Char { .. }) | Some(Type::Enum { .. }) => {
+                ExprKind::IntLit(0)
+            }
+            other => {
+                return Err(FrontendError::new(
+                    "<initializer>",
+                    format!("cannot zero-initialize {other:?}"),
+                ))
+            }
+        };
+        Ok(Expr {
+            id,
+            ty,
+            category: ValueCategory::PRValue,
+            kind,
+            provenance: Provenance::synthesized(),
+        })
+    }
+
     fn lower_condition(
         &mut self,
         cond: &schema::Expr,
@@ -429,13 +703,99 @@ impl Lowerer {
                 kind: ExprKind::StringLit(value.clone()),
                 provenance,
             },
-            schema::ExprKind::DeclRef { name } => Expr {
+            schema::ExprKind::CharLit { value } => Expr {
                 id,
                 ty,
-                category: ValueCategory::LValue,
-                kind: ExprKind::Local(name.clone()),
+                category: ValueCategory::PRValue,
+                kind: ExprKind::CharLit(*value),
                 provenance,
             },
+            schema::ExprKind::DeclRef { name } => {
+                let kind = if self.locals.contains(name) {
+                    ExprKind::Local(name.clone())
+                } else if let Some(item) = self.globals.get(name) {
+                    ExprKind::Global(item.clone())
+                } else if let Some((item, value)) = self.enumerators.get(name) {
+                    ExprKind::EnumConst {
+                        item: item.clone(),
+                        value: *value,
+                    }
+                } else {
+                    return Err(FrontendError::new(
+                        format!(
+                            "{}:{}:{}",
+                            provenance.span.file, provenance.span.line, provenance.span.column
+                        ),
+                        format!("unresolved name {name}"),
+                    ));
+                };
+                Expr {
+                    id,
+                    ty,
+                    category: ValueCategory::LValue,
+                    kind,
+                    provenance,
+                }
+            }
+            schema::ExprKind::Member { base, field, arrow } => {
+                let base = self.lower_expr(base, nodes)?;
+                Expr {
+                    id,
+                    ty,
+                    category: ValueCategory::LValue,
+                    kind: ExprKind::Member {
+                        base: Box::new(base),
+                        field: field.clone(),
+                        arrow: *arrow,
+                    },
+                    provenance,
+                }
+            }
+            schema::ExprKind::Cond {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                let cond = self.lower_condition(cond, nodes)?;
+                let then_branch = self.lower_expr(then_branch, nodes)?;
+                let else_branch = self.lower_expr(else_branch, nodes)?;
+                Expr {
+                    id,
+                    ty,
+                    category: ValueCategory::PRValue,
+                    kind: ExprKind::Cond {
+                        cond: Box::new(cond),
+                        then_branch: Box::new(then_branch),
+                        else_branch: Box::new(else_branch),
+                    },
+                    provenance,
+                }
+            }
+            schema::ExprKind::InitList { elems } => {
+                let lowered = self.lower_init_list(ty, elems, nodes)?;
+                Expr {
+                    id,
+                    ty,
+                    category: ValueCategory::PRValue,
+                    kind: lowered,
+                    provenance,
+                }
+            }
+            schema::ExprKind::SizeOf { operand } => {
+                let size = self.schema_type_size(&operand.ty).ok_or_else(|| {
+                    FrontendError::new(
+                        "<sizeof>",
+                        format!("cannot determine the size of {:?}", operand.ty),
+                    )
+                })?;
+                Expr {
+                    id,
+                    ty,
+                    category: ValueCategory::PRValue,
+                    kind: ExprKind::IntLit(size as i64),
+                    provenance,
+                }
+            }
             schema::ExprKind::Binary { op, lhs, rhs } => {
                 let lhs = self.lower_expr(lhs, nodes)?;
                 let rhs = self.lower_expr(rhs, nodes)?;
@@ -453,7 +813,23 @@ impl Lowerer {
             }
             schema::ExprKind::Assign { op, lhs, rhs } => {
                 let lhs = self.lower_expr(lhs, nodes)?;
-                let rhs = self.lower_expr(rhs, nodes)?;
+                let mut rhs = self.lower_expr(rhs, nodes)?;
+                // `x += 1` computes in x's type; C's node carries the
+                // unconverted literal, so the conversion is made explicit here.
+                if self.program.types.canonical(lhs.ty) != self.program.types.canonical(rhs.ty) {
+                    let cast_id = nodes.next();
+                    rhs = Expr {
+                        id: cast_id,
+                        ty: lhs.ty,
+                        category: ValueCategory::PRValue,
+                        kind: ExprKind::Cast {
+                            to: lhs.ty,
+                            expr: Box::new(rhs),
+                            implicit: true,
+                        },
+                        provenance: Provenance::synthesized(),
+                    };
+                }
                 Expr {
                     id,
                     ty,
