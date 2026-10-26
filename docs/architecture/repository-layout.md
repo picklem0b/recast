@@ -191,3 +191,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.11`            | M1 exit criteria.                                                        |
 | `v1.1.12`            | M1 references point at the page tags.                                    |
 | `v1.1.13`            | M1 audit repairs.                                                        |
+| `v1.1.14`            | M1 repair note: the signed-`char` check.                                 |
