@@ -212,11 +212,26 @@ fn slice_argument(
     let element = c_element_type(program, *pointee);
     match value {
         Value::String(text) if matches!(program.types.get(*pointee), Some(Type::Char { .. })) => {
-            Ok((
-                format!("\"{}\"", escape_c(text)),
-                format!("b\"{}\"", escape_bytes(text.as_bytes())),
-                text.len(),
-            ))
+            let signed = matches!(
+                program.types.get(*pointee),
+                Some(Type::Char { signed: true })
+            );
+            // A byte-string literal has type `&[u8; N]`. When the target has a
+            // signed `char`, the translated parameter is `&[i8]`, so the
+            // elements have to be spelled out instead of relying on the
+            // literal's element type.
+            let rust = if signed {
+                let values = text
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| format!("{}i8", *byte as i8))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("&[{values}]")
+            } else {
+                format!("b\"{}\"", escape_bytes(text.as_bytes()))
+            };
+            Ok((format!("\"{}\"", escape_c(text)), rust, text.len()))
         }
         Value::Array(items) if items.is_empty() => {
             Ok((format!("({element} *)0"), "&[]".to_string(), 0))
@@ -493,5 +508,37 @@ fn integer_shape(program: &Program, id: TypeId) -> Option<(u16, bool)> {
             .enum_named(name)
             .and_then(|item| integer_shape(program, item.underlying)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use recast_ir::Target;
+
+    fn pointer_to_char(program: &mut Program, signed: bool) -> TypeId {
+        let character = program.types.intern(Type::Char { signed });
+        program.types.intern(Type::Pointer {
+            pointee: character,
+            is_const: true,
+        })
+    }
+
+    #[test]
+    fn string_arguments_follow_the_target_char_signedness() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+
+        let unsigned = pointer_to_char(&mut program, false);
+        let (c, rust, len) = slice_argument(&program, unsigned, &Value::String("hi".to_string()))
+            .expect("unsigned string argument");
+        assert_eq!(c, "\"hi\"");
+        assert_eq!(rust, "b\"hi\"");
+        assert_eq!(len, 2);
+
+        let signed = pointer_to_char(&mut program, true);
+        let (_, rust, len) = slice_argument(&program, signed, &Value::String("hi".to_string()))
+            .expect("signed string argument");
+        assert_eq!(rust, "&[104i8, 105i8]");
+        assert_eq!(len, 2);
     }
 }
