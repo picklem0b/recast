@@ -15,6 +15,7 @@ use recast_schema::{Ast, SCHEMA_NAME, SCHEMA_VERSION};
 use recast_translate::translate;
 
 const EXIT_OK: u8 = 0;
+const EXIT_REJECT: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_INPUT: u8 = 3;
 const EXIT_TOOLCHAIN: u8 = 4;
@@ -99,6 +100,24 @@ enum CommandLine {
     Analyze,
     /// Translate to Rust and write the generated crate.
     Translate,
+    /// Run the M1 verification ladder against a corpus case.
+    Verify {
+        /// Case description in recast-case/1 JSON.
+        #[arg(long)]
+        case: PathBuf,
+        /// Original C source the case describes.
+        #[arg(long)]
+        source: PathBuf,
+        /// Skip operator mutation testing.
+        #[arg(long)]
+        no_mutation: bool,
+        /// Maximum mutants per case.
+        #[arg(long, default_value_t = 24)]
+        max_mutants: usize,
+        /// Minimum mutation kill rate in percent (roadmap M1 requires 95).
+        #[arg(long, default_value_t = 95.0)]
+        min_kill_rate: f64,
+    },
     /// Print version and schema versions.
     Version,
     /// Check the toolchain and print fixes.
@@ -122,6 +141,20 @@ fn run(cli: Cli) -> Result<u8, CliError> {
         CommandLine::Export => export(&cli.global),
         CommandLine::Analyze => analyze(&cli.global),
         CommandLine::Translate => translate_command(&cli.global),
+        CommandLine::Verify {
+            case,
+            source,
+            no_mutation,
+            max_mutants,
+            min_kill_rate,
+        } => verify_command(
+            &cli.global,
+            &case,
+            &source,
+            !no_mutation,
+            max_mutants,
+            min_kill_rate,
+        ),
         CommandLine::Version => version(&cli.global),
         CommandLine::Doctor => doctor(&cli.global),
     }
@@ -211,7 +244,7 @@ rust_edition = \"2021\"
 schema = 1
 
 # Contracts record facts the analysis cannot derive.
-# Add [[function]] entries as described in docs/09-cli-and-configuration.md.
+# Add [[function]] entries as described in docs/guides/cli-and-configuration.md.
 ";
     std::fs::write(config_path, config).map_err(|error| {
         CliError::input(format!("cannot write {}: {error}", config_path.display()))
@@ -377,6 +410,9 @@ fn sibling_exporter() -> Option<PathBuf> {
 fn analyze(global: &Global) -> Result<u8, CliError> {
     let (program, files) = load_program(global)?;
     write_tir(global, &program)?;
+    let analysis = recast_analysis::analyze(&program);
+    let findings = analysis.findings.len();
+    write_findings(global, &analysis)?;
     let functions = program
         .functions
         .iter()
@@ -384,17 +420,35 @@ fn analyze(global: &Global) -> Result<u8, CliError> {
         .count();
     if global.reports() {
         match global.format {
-            Format::Human => println!(
-                "analyzed {functions} function(s) from {files} translation unit(s); wrote {}",
-                global.out.join("tir/program.tir").display()
-            ),
+            Format::Human => {
+                println!(
+                    "analyzed {functions} function(s) from {files} translation unit(s); {findings} finding(s); wrote {}",
+                    global.out.join("tir/program.tir").display()
+                );
+                for finding in &analysis.findings {
+                    println!(
+                        "  {} {}:{}:{} {}",
+                        finding.rule, finding.file, finding.line, finding.column, finding.message
+                    );
+                }
+            }
             Format::Json => println!(
-                "{{\"functions\":{functions},\"translation_units\":{files},\"tir\":\"{}\"}}",
+                "{{\"functions\":{functions},\"translation_units\":{files},\"findings\":{findings},\"tir\":\"{}\"}}",
                 global.out.join("tir/program.tir").display()
             ),
         }
     }
     Ok(EXIT_OK)
+}
+
+fn write_findings(global: &Global, analysis: &recast_analysis::Analysis) -> Result<(), CliError> {
+    let text = analysis
+        .findings_json()
+        .map_err(|error| CliError::internal(error.to_string()))?;
+    let path = global.out.join("findings.json");
+    std::fs::write(&path, text)
+        .map_err(|error| CliError::input(format!("cannot write {}: {error}", path.display())))?;
+    Ok(())
 }
 
 fn translate_command(global: &Global) -> Result<u8, CliError> {
@@ -449,6 +503,111 @@ overflow-checks = true
                 "{{\"functions\":{functions},\"translation_units\":{files},\"crate\":\"{}\"}}",
                 crate_dir.display()
             ),
+        }
+    }
+    Ok(EXIT_OK)
+}
+
+fn verify_command(
+    global: &Global,
+    case_path: &Path,
+    source: &Path,
+    mutation: bool,
+    max_mutants: usize,
+    min_kill_rate: f64,
+) -> Result<u8, CliError> {
+    let (program, _) = load_program(global)?;
+    let case =
+        recast_verify::Case::load(case_path).map_err(|error| CliError::input(error.to_string()))?;
+    let crate_dir = global.out.join("rust");
+    if !crate_dir.join("src/lib.rs").is_file() {
+        return Err(CliError::input(format!(
+            "{} has no generated crate; run recast translate first",
+            crate_dir.display()
+        )));
+    }
+    let mut options = recast_verify::Options::new(global.out.join("verify"));
+    options.mutation = mutation;
+    options.max_mutants = max_mutants;
+    if let Some(cc) = std::env::var_os("RECAST_CC") {
+        options.cc = PathBuf::from(cc);
+    }
+    if let Some(rustc) = std::env::var_os("RECAST_RUSTC") {
+        options.rustc = PathBuf::from(rustc);
+    }
+    let report = recast_verify::verify(&program, &crate_dir, source, &case, &options)
+        .map_err(|error| CliError::input(error.to_string()))?;
+
+    if global.reports() {
+        match global.format {
+            Format::Human => {
+                println!(
+                    "verify {}: V0 {}, V2 {}/{}, {} sweep(s)",
+                    report.case,
+                    if report.compiled { "pass" } else { "fail" },
+                    report.calls_passed,
+                    report.calls_total,
+                    report.sweeps.len()
+                );
+                for sweep in &report.sweeps {
+                    println!(
+                        "  sweep {} ({} iterations): {}",
+                        sweep.function,
+                        sweep.iterations,
+                        if sweep.passed { "pass" } else { "FAIL" }
+                    );
+                }
+                if let Some(mutations) = &report.mutations {
+                    println!(
+                        "  mutation: {}/{} killed ({:.1}%), {} compile failures",
+                        mutations.killed(),
+                        mutations.generated,
+                        mutations.kill_rate(),
+                        mutations.killed_by_compile
+                    );
+                }
+            }
+            Format::Json => {
+                let mutations = report
+                    .mutations
+                    .as_ref()
+                    .map(|m| {
+                        format!(
+                            "{{\"generated\":{},\"killed\":{},\"survived\":{},\"kill_rate\":{:.2}}}",
+                            m.generated,
+                            m.killed(),
+                            m.survived.len(),
+                            m.kill_rate()
+                        )
+                    })
+                    .unwrap_or_else(|| "null".to_string());
+                println!(
+                    "{{\"case\":\"{}\",\"compiled\":{},\"calls\":[{},{}],\"sweeps\":{},\"mutation\":{mutations},\"passed\":{}}}",
+                    report.case,
+                    report.compiled,
+                    report.calls_passed,
+                    report.calls_total,
+                    report.sweeps.len(),
+                    report.passed()
+                );
+            }
+        }
+    }
+    for failure in &report.failures {
+        eprintln!("recast: {failure}");
+    }
+    if !report.passed() {
+        return Ok(EXIT_REJECT);
+    }
+    if let Some(mutations) = &report.mutations {
+        if mutations.kill_rate() < min_kill_rate {
+            eprintln!(
+                "recast: mutation kill rate {:.1}% is below the {:.1}% threshold; {} mutant(s) survived",
+                mutations.kill_rate(),
+                min_kill_rate,
+                mutations.survived.len()
+            );
+            return Ok(EXIT_REJECT);
         }
     }
     Ok(EXIT_OK)
@@ -539,10 +698,6 @@ fn write_tir(global: &Global, program: &Program) -> Result<(), CliError> {
     let path = tir_dir.join("program.tir");
     std::fs::write(&path, program.dump())
         .map_err(|error| CliError::input(format!("cannot write {}: {error}", path.display())))?;
-    let findings = global.out.join("findings.json");
-    std::fs::write(&findings, "[]\n").map_err(|error| {
-        CliError::input(format!("cannot write {}: {error}", findings.display()))
-    })?;
     Ok(())
 }
 
@@ -554,7 +709,7 @@ fn version(global: &Global) -> Result<u8, CliError> {
             println!("recast {version}");
             println!("{SCHEMA_NAME} schema version {SCHEMA_VERSION}");
             println!("{} schema version {}", recast_ir::SCHEMA_NAME, recast_ir::SCHEMA_VERSION);
-            println!("rule set: empty (M0)");
+            println!("rule set: M1 (UB-001, UB-005, UB-007, UB-008)");
         }
         Format::Json => println!(
             "{{\"name\":\"{name}\",\"version\":\"{version}\",\"schemas\":{{\"ast\":\"{SCHEMA_NAME}/{SCHEMA_VERSION}\",\"tir\":\"{}/{}\"}},\"rules\":\"empty\"}}",
