@@ -15,6 +15,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -65,6 +67,13 @@ Value type_json(clang::QualType type, clang::ASTContext &context) {
   if (type->isBooleanType()) {
     return Value(scalar("bool", nullptr));
   }
+  if (const auto *array = context.getAsConstantArrayType(type)) {
+    Object node;
+    node["kind"] = "array";
+    node["elem"] = type_json(array->getElementType(), context);
+    node["len"] = array->getSize().getZExtValue();
+    return Value(std::move(node));
+  }
   if (type->isPointerType()) {
     Object pointer;
     pointer["kind"] = "pointer";
@@ -80,6 +89,18 @@ Value type_json(clang::QualType type, clang::ASTContext &context) {
     named["canonical"] =
         type_json(typedef_type->getDecl()->getUnderlyingType(), context);
     return Value(std::move(named));
+  }
+  if (const auto *enum_type = type->getAs<clang::EnumType>()) {
+    Object node;
+    node["kind"] = "enum";
+    node["name"] = enum_type->getDecl()->getNameAsString();
+    return Value(std::move(node));
+  }
+  if (const auto *record_type = type->getAs<clang::RecordType>()) {
+    Object node;
+    node["kind"] = "record";
+    node["name"] = record_type->getDecl()->getNameAsString();
+    return Value(std::move(node));
   }
   if (type->isIntegerType()) {
     Object integer;
@@ -195,6 +216,111 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
     return node;
   }
 
+  if (clang::isa<clang::BreakStmt>(stmt)) {
+    Object node;
+    node["kind"] = "break";
+    node["span"] = span_json(stmt->getBeginLoc(), context);
+    return node;
+  }
+
+  if (clang::isa<clang::ContinueStmt>(stmt)) {
+    Object node;
+    node["kind"] = "continue";
+    node["span"] = span_json(stmt->getBeginLoc(), context);
+    return node;
+  }
+
+  if (auto *do_stmt = clang::dyn_cast<clang::DoStmt>(stmt)) {
+    Object node;
+    node["kind"] = "do_while";
+    node["body"] = stmt_json(do_stmt->getBody(), context);
+    node["cond"] = expr_json(do_stmt->getCond(), context);
+    node["span"] = span_json(do_stmt->getBeginLoc(), context);
+    return node;
+  }
+
+  if (auto *switch_stmt = clang::dyn_cast<clang::SwitchStmt>(stmt)) {
+    Object node;
+    node["kind"] = "switch";
+    node["scrutinee"] = expr_json(switch_stmt->getCond(), context);
+
+    Array cases;
+    std::optional<size_t> current;
+    bool nested_label = false;
+
+    auto begin_case = [&](std::optional<int64_t> value) {
+      Object entry;
+      if (value.has_value()) {
+        entry["label"] = *value;
+      } else {
+        entry["label"] = nullptr;
+      }
+      entry["stmts"] = Array();
+      entry["falls_through"] = false;
+      cases.push_back(std::move(entry));
+      current = cases.size() - 1;
+    };
+
+    // A switch body is a list of statements where each case owns the
+    // statements that follow it. Nested `case` labels (empty fallthrough) are
+    // separate arms with empty bodies.
+    std::function<void(const clang::Stmt *, bool)> append = [&](const clang::Stmt *child,
+                                                               bool inside_case) {
+      if (child == nullptr) {
+        return;
+      }
+      if (auto *case_stmt = clang::dyn_cast<clang::CaseStmt>(child)) {
+        auto value = case_stmt->getLHS()->EvaluateKnownConstInt(context);
+        begin_case(value.getSExtValue());
+        append(case_stmt->getSubStmt(), true);
+        return;
+      }
+      if (auto *default_stmt = clang::dyn_cast<clang::DefaultStmt>(child)) {
+        begin_case(std::nullopt);
+        append(default_stmt->getSubStmt(), true);
+        return;
+      }
+      if (auto *compound = clang::dyn_cast<clang::CompoundStmt>(child)) {
+        for (const clang::Stmt *inner : compound->body()) {
+          append(inner, inside_case);
+        }
+        return;
+      }
+      if (!inside_case || !current.has_value()) {
+        nested_label = true;
+        return;
+      }
+      if (auto *array = cases[*current].getAsObject()->getArray("stmts")) {
+        array->push_back(stmt_json(child, context));
+      }
+    };
+
+    append(switch_stmt->getBody(), false);
+    (void)nested_label;
+
+    // A case falls through when its last statement cannot transfer control.
+    for (size_t index = 0; index + 1 < cases.size(); ++index) {
+      auto *entry = cases[index].getAsObject();
+      auto *stmts = entry->getArray("stmts");
+      bool falls = stmts == nullptr || stmts->empty();
+      if (!falls) {
+        const Value &last = stmts->back();
+        std::optional<llvm::StringRef> kind = last.getAsObject()
+                                                 ? last.getAsObject()->getString("kind")
+                                                 : std::nullopt;
+        falls = !(kind && (*kind == "break" || *kind == "return"));
+      }
+      (*entry)["falls_through"] = falls;
+    }
+    if (!cases.empty()) {
+      (*cases.back().getAsObject())["falls_through"] = false;
+    }
+
+    node["cases"] = std::move(cases);
+    node["span"] = span_json(switch_stmt->getBeginLoc(), context);
+    return node;
+  }
+
   if (auto *return_stmt = clang::dyn_cast<clang::ReturnStmt>(stmt)) {
     Object node;
     node["kind"] = "return";
@@ -253,10 +379,66 @@ Object expr_json(const clang::Expr *expr, clang::ASTContext &context) {
     return node;
   }
 
+  if (auto *literal = clang::dyn_cast<clang::CharacterLiteral>(expr)) {
+    Object node;
+    node["kind"] = "char_lit";
+    node["value"] = literal->getValue();
+    node["type"] = type_json(expr->getType(), context);
+    return node;
+  }
+
+  // `sizeof` is resolved here, against the target the exporter is compiling
+  // for, so the frontend never has to model C layout itself.
+  if (auto *size = clang::dyn_cast<clang::UnaryExprOrTypeTraitExpr>(expr)) {
+    if (size->getKind() == clang::UETT_SizeOf) {
+      clang::QualType measured = size->isArgumentType()
+                                     ? size->getArgumentType()
+                                     : size->getArgumentExpr()->getType();
+      Object node;
+      node["kind"] = "int_lit";
+      node["value"] = static_cast<int64_t>(
+          context.getTypeSizeInChars(measured).getQuantity());
+      node["type"] = type_json(expr->getType(), context);
+      return node;
+    }
+  }
+
   if (auto *reference = clang::dyn_cast<clang::DeclRefExpr>(expr)) {
     Object node;
     node["kind"] = "decl_ref";
     node["name"] = reference->getDecl()->getNameAsString();
+    node["type"] = type_json(expr->getType(), context);
+    return node;
+  }
+
+  if (auto *member = clang::dyn_cast<clang::MemberExpr>(expr)) {
+    Object node;
+    node["kind"] = "member";
+    node["base"] = expr_json(member->getBase(), context);
+    node["field"] = member->getMemberNameInfo().getAsString();
+    node["arrow"] = member->isArrow();
+    node["type"] = type_json(expr->getType(), context);
+    return node;
+  }
+
+  if (auto *conditional = clang::dyn_cast<clang::ConditionalOperator>(expr)) {
+    Object node;
+    node["kind"] = "cond";
+    node["cond"] = expr_json(conditional->getCond(), context);
+    node["then_branch"] = expr_json(conditional->getTrueExpr(), context);
+    node["else_branch"] = expr_json(conditional->getFalseExpr(), context);
+    node["type"] = type_json(expr->getType(), context);
+    return node;
+  }
+
+  if (auto *list = clang::dyn_cast<clang::InitListExpr>(expr)) {
+    Object node;
+    node["kind"] = "init_list";
+    Array elems;
+    for (const clang::Expr *elem : list->inits()) {
+      elems.push_back(expr_json(elem, context));
+    }
+    node["elems"] = std::move(elems);
     node["type"] = type_json(expr->getType(), context);
     return node;
   }
@@ -354,8 +536,93 @@ Object expr_json(const clang::Expr *expr, clang::ASTContext &context) {
 
 class AstVisitor : public clang::RecursiveASTVisitor<AstVisitor> {
 public:
-  AstVisitor(clang::ASTContext &context, std::vector<Object> &functions)
-      : context(context), functions(functions) {}
+  struct Output {
+    std::vector<Object> functions;
+    std::vector<Object> records;
+    std::vector<Object> enums;
+    std::vector<Object> globals;
+  };
+
+  AstVisitor(clang::ASTContext &context, Output &output)
+      : context(context), output(output) {}
+
+  bool VisitRecordDecl(clang::RecordDecl *record) {
+    if (!record->isCompleteDefinition() || record->isAnonymousStructOrUnion() ||
+        record->getDeclContext()->isFunctionOrMethod()) {
+      return true;
+    }
+    auto &source = context.getSourceManager();
+    if (!source.isWrittenInMainFile(record->getLocation())) {
+      return true;
+    }
+    Object node;
+    node["name"] = record->getNameAsString();
+    clang::QualType self = context.getRecordType(record);
+    node["size"] = static_cast<int64_t>(context.getTypeSizeInChars(self).getQuantity());
+    node["align"] = static_cast<int64_t>(context.getTypeAlignInChars(self).getQuantity());
+    node["span"] = span_json(record->getLocation(), context);
+    Array fields;
+    for (const clang::FieldDecl *field : record->fields()) {
+      Object entry;
+      entry["name"] = field->getNameAsString();
+      entry["type"] = type_json(field->getType(), context);
+      entry["span"] = span_json(field->getLocation(), context);
+      fields.push_back(std::move(entry));
+    }
+    node["fields"] = std::move(fields);
+    output.records.push_back(std::move(node));
+    return true;
+  }
+
+  bool VisitEnumDecl(clang::EnumDecl *item) {
+    if (!item->isCompleteDefinition() || item->getName().empty()) {
+      return true;
+    }
+    auto &source = context.getSourceManager();
+    if (!source.isWrittenInMainFile(item->getLocation())) {
+      return true;
+    }
+    Object node;
+    node["name"] = item->getNameAsString();
+    node["underlying"] = type_json(item->getIntegerType(), context);
+    node["span"] = span_json(item->getLocation(), context);
+    Array variants;
+    for (const clang::EnumConstantDecl *constant : item->enumerators()) {
+      Object entry;
+      entry["name"] = constant->getNameAsString();
+      entry["value"] = constant->getInitVal().getSExtValue();
+      variants.push_back(std::move(entry));
+    }
+    node["variants"] = std::move(variants);
+    output.enums.push_back(std::move(node));
+    return true;
+  }
+
+  bool VisitVarDecl(clang::VarDecl *variable) {
+    if (!variable->getDeclContext()->isTranslationUnit()) {
+      return true;
+    }
+    auto &source = context.getSourceManager();
+    if (!source.isWrittenInMainFile(variable->getLocation())) {
+      return true;
+    }
+    if (variable->getStorageClass() == clang::SC_Extern && !variable->hasInit()) {
+      return true;
+    }
+    Object node;
+    node["name"] = variable->getNameAsString();
+    node["type"] = type_json(variable->getType(), context);
+    node["is_const"] = variable->getType().isConstQualified();
+    node["linkage"] = variable->isExternallyVisible() ? "external" : "internal";
+    node["span"] = span_json(variable->getLocation(), context);
+    if (const clang::Expr *init = variable->getInit()) {
+      node["init"] = expr_json(init, context);
+    } else {
+      node["init"] = nullptr;
+    }
+    output.globals.push_back(std::move(node));
+    return true;
+  }
 
   bool VisitFunctionDecl(clang::FunctionDecl *function) {
     if (!function->doesThisDeclarationHaveABody()) {
@@ -383,13 +650,13 @@ public:
     node["params"] = std::move(params);
     node["body"] = stmt_json(function->getBody(), context);
     node["span"] = span_json(function->getLocation(), context);
-    functions.push_back(std::move(node));
+    output.functions.push_back(std::move(node));
     return true;
   }
 
 private:
   clang::ASTContext &context;
-  std::vector<Object> &functions;
+  Output &output;
 };
 
 Object target_json(clang::ASTContext &context) {
@@ -417,17 +684,23 @@ public:
       state.target = target_json(context);
     }
 
-    std::vector<Object> functions;
-    AstVisitor visitor(context, functions);
+    AstVisitor::Output output;
+    AstVisitor visitor(context, output);
     visitor.TraverseDecl(context.getTranslationUnitDecl());
 
     Object unit;
     unit["file"] = file;
-    Array array;
-    for (Object &function : functions) {
-      array.push_back(std::move(function));
-    }
-    unit["functions"] = std::move(array);
+    auto attach = [&](const char *key, std::vector<Object> &objects) {
+      Array array;
+      for (Object &object : objects) {
+        array.push_back(std::move(object));
+      }
+      unit[key] = std::move(array);
+    };
+    attach("functions", output.functions);
+    attach("records", output.records);
+    attach("enums", output.enums);
+    attach("globals", output.globals);
     state.units.push_back(std::move(unit));
   }
 

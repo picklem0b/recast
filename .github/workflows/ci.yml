@@ -60,3 +60,6 @@ jobs:
 
       - name: M0 exit criteria
         run: bash ci/m0-exit.sh
+
+      - name: M1 exit criteria
+        run: bash ci/m1-exit.sh

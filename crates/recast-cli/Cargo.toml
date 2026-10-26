@@ -14,4 +14,6 @@ clap.workspace = true
 recast-schema = { path = "../recast-schema" }
 recast-ir = { path = "../recast-ir" }
 recast-frontend = { path = "../recast-frontend" }
+recast-analysis = { path = "../recast-analysis" }
 recast-translate = { path = "../recast-translate" }
+recast-verify = { path = "../recast-verify" }

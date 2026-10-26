@@ -34,10 +34,70 @@ pub struct Target {
 }
 
 /// One preprocessed source file.
+///
+/// `records`, `enums` and `globals` are additive in M1: an older document
+/// simply omits them and decodes to empty vectors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TranslationUnit {
     pub file: String,
     pub functions: Vec<Function>,
+    #[serde(default)]
+    pub records: Vec<Record>,
+    #[serde(default)]
+    pub enums: Vec<EnumDef>,
+    #[serde(default)]
+    pub globals: Vec<Global>,
+}
+
+/// A struct definition with its fields in declaration order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Record {
+    pub name: String,
+    pub fields: Vec<Field>,
+    /// `sizeof` for the record under the exported target, in bytes.
+    #[serde(default)]
+    pub size: u64,
+    /// `alignof` for the record under the exported target, in bytes.
+    #[serde(default)]
+    pub align: u64,
+    pub span: Span,
+}
+
+/// One field of a struct.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Field {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Ty,
+    pub span: Span,
+}
+
+/// An enum definition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumDef {
+    pub name: String,
+    pub underlying: Ty,
+    pub variants: Vec<Enumerator>,
+    pub span: Span,
+}
+
+/// One enumerator with the value Clang computed for it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Enumerator {
+    pub name: String,
+    pub value: i64,
+}
+
+/// A file-scope variable or constant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Global {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Ty,
+    pub init: Option<Expr>,
+    pub is_const: bool,
+    pub linkage: String,
+    pub span: Span,
 }
 
 /// A function definition or declaration.
@@ -86,6 +146,16 @@ pub enum Ty {
         pointee: Box<Ty>,
         pointee_const: bool,
     },
+    Array {
+        elem: Box<Ty>,
+        len: u64,
+    },
+    Record {
+        name: String,
+    },
+    Enum {
+        name: String,
+    },
     Named {
         name: String,
         canonical: Box<Ty>,
@@ -131,6 +201,22 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
+    DoWhile {
+        body: Box<Stmt>,
+        cond: Expr,
+        span: Span,
+    },
+    Switch {
+        scrutinee: Expr,
+        cases: Vec<Case>,
+        span: Span,
+    },
     Expr {
         expr: Expr,
         span: Span,
@@ -140,6 +226,15 @@ pub enum Stmt {
         spelling: String,
         span: Span,
     },
+}
+
+/// One arm of a `switch` statement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Case {
+    /// `None` is the `default` arm.
+    pub label: Option<i64>,
+    pub stmts: Vec<Stmt>,
+    pub falls_through: bool,
 }
 
 /// A typed expression. The `kind` object is flattened into the expression.
@@ -164,6 +259,9 @@ pub enum ExprKind {
     StringLit {
         value: String,
     },
+    CharLit {
+        value: u32,
+    },
     DeclRef {
         name: String,
     },
@@ -185,6 +283,22 @@ pub enum ExprKind {
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
+    },
+    Member {
+        base: Box<Expr>,
+        field: String,
+        arrow: bool,
+    },
+    Cond {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
+    SizeOf {
+        operand: Box<Expr>,
+    },
+    InitList {
+        elems: Vec<Expr>,
     },
     Call {
         callee: String,
@@ -270,10 +384,135 @@ impl Ast {
                     ));
                 }
             }
+            for (index, record) in unit.records.iter().enumerate() {
+                let path = format!("{unit_path}.records[{index}]");
+                validate_record(record, &path)?;
+                if !names.insert(record.name.clone()) {
+                    return Err(SchemaError::new(
+                        format!("{path}.name"),
+                        format!("duplicate definition of {}", record.name),
+                    ));
+                }
+            }
+            for (index, item) in unit.enums.iter().enumerate() {
+                let path = format!("{unit_path}.enums[{index}]");
+                validate_enum(item, &path)?;
+                if !names.insert(item.name.clone()) {
+                    return Err(SchemaError::new(
+                        format!("{path}.name"),
+                        format!("duplicate definition of {}", item.name),
+                    ));
+                }
+                for variant in &item.variants {
+                    if !names.insert(variant.name.clone()) {
+                        return Err(SchemaError::new(
+                            format!("{path}.variants"),
+                            format!("duplicate definition of {}", variant.name),
+                        ));
+                    }
+                }
+            }
+            for (index, global) in unit.globals.iter().enumerate() {
+                let path = format!("{unit_path}.globals[{index}]");
+                validate_global(global, &path)?;
+                if !names.insert(global.name.clone()) {
+                    return Err(SchemaError::new(
+                        format!("{path}.name"),
+                        format!("duplicate definition of {}", global.name),
+                    ));
+                }
+            }
         }
 
         Ok(())
     }
+}
+
+fn validate_record(record: &Record, path: &str) -> Result<(), SchemaError> {
+    if record.name.is_empty() {
+        return Err(SchemaError::new(
+            format!("{path}.name"),
+            "must not be empty",
+        ));
+    }
+    if record.fields.is_empty() {
+        return Err(SchemaError::new(
+            format!("{path}.fields"),
+            "a record needs at least one field",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for (index, field) in record.fields.iter().enumerate() {
+        let field_path = format!("{path}.fields[{index}]");
+        if field.name.is_empty() {
+            return Err(SchemaError::new(
+                format!("{field_path}.name"),
+                "must not be empty",
+            ));
+        }
+        if !seen.insert(field.name.clone()) {
+            return Err(SchemaError::new(
+                format!("{field_path}.name"),
+                format!("duplicate field {}", field.name),
+            ));
+        }
+        validate_span(&field.span, &format!("{field_path}.span"))?;
+        validate_ty(&field.ty, &format!("{field_path}.type"))?;
+    }
+    Ok(())
+}
+
+fn validate_enum(item: &EnumDef, path: &str) -> Result<(), SchemaError> {
+    if item.name.is_empty() {
+        return Err(SchemaError::new(
+            format!("{path}.name"),
+            "must not be empty",
+        ));
+    }
+    validate_ty(&item.underlying, &format!("{path}.underlying"))?;
+    if item.variants.is_empty() {
+        return Err(SchemaError::new(
+            format!("{path}.variants"),
+            "an enum needs at least one enumerator",
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for (index, variant) in item.variants.iter().enumerate() {
+        if variant.name.is_empty() {
+            return Err(SchemaError::new(
+                format!("{path}.variants[{index}].name"),
+                "must not be empty",
+            ));
+        }
+        if !seen.insert(variant.value) {
+            return Err(SchemaError::new(
+                format!("{path}.variants[{index}].value"),
+                format!("duplicate enumerator value {}", variant.value),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_global(global: &Global, path: &str) -> Result<(), SchemaError> {
+    if global.name.is_empty() {
+        return Err(SchemaError::new(
+            format!("{path}.name"),
+            "must not be empty",
+        ));
+    }
+    validate_span(&global.span, &format!("{path}.span"))?;
+    validate_ty(&global.ty, &format!("{path}.type"))?;
+    if let Some(init) = &global.init {
+        validate_expr(init, &format!("{path}.init"))?;
+    }
+    if global.linkage != "external" && global.linkage != "internal" {
+        return Err(SchemaError::new(
+            format!("{path}.linkage"),
+            format!("unknown linkage {}", global.linkage),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_target(target: &Target) -> Result<(), SchemaError> {
@@ -387,6 +626,52 @@ fn validate_stmt(stmt: &Stmt, path: &str) -> Result<(), SchemaError> {
                 validate_expr(value, &format!("{path}.value"))?;
             }
         }
+        Stmt::Break { span } | Stmt::Continue { span } => {
+            validate_span(span, &format!("{path}.span"))?;
+        }
+        Stmt::DoWhile { body, cond, span } => {
+            validate_span(span, &format!("{path}.span"))?;
+            validate_stmt(body, &format!("{path}.body"))?;
+            validate_expr(cond, &format!("{path}.cond"))?;
+        }
+        Stmt::Switch {
+            scrutinee,
+            cases,
+            span,
+        } => {
+            validate_span(span, &format!("{path}.span"))?;
+            validate_expr(scrutinee, &format!("{path}.scrutinee"))?;
+            if cases.is_empty() {
+                return Err(SchemaError::new(
+                    format!("{path}.cases"),
+                    "a switch needs at least one case",
+                ));
+            }
+            let mut labels = BTreeSet::new();
+            let mut defaults = 0;
+            for (index, item) in cases.iter().enumerate() {
+                let case_path = format!("{path}.cases[{index}]");
+                match item.label {
+                    Some(label) if !labels.insert(label) => {
+                        return Err(SchemaError::new(
+                            format!("{case_path}.label"),
+                            format!("duplicate case label {label}"),
+                        ));
+                    }
+                    None => defaults += 1,
+                    Some(_) => {}
+                }
+                for (stmt_index, child) in item.stmts.iter().enumerate() {
+                    validate_stmt(child, &format!("{case_path}.stmts[{stmt_index}]"))?;
+                }
+            }
+            if defaults > 1 {
+                return Err(SchemaError::new(
+                    format!("{path}.cases"),
+                    "a switch has at most one default",
+                ));
+            }
+        }
         Stmt::Expr { expr, span } => {
             validate_span(span, &format!("{path}.span"))?;
             validate_expr(expr, &format!("{path}.expr"))?;
@@ -419,12 +704,39 @@ fn validate_expr(expr: &Expr, path: &str) -> Result<(), SchemaError> {
             validate_expr(lhs, &format!("{path}.lhs"))?;
             validate_expr(rhs, &format!("{path}.rhs"))?;
         }
+        ExprKind::CharLit { .. } => {}
         ExprKind::Unary { operand, .. } => {
             validate_expr(operand, &format!("{path}.operand"))?;
         }
         ExprKind::Index { base, index } => {
             validate_expr(base, &format!("{path}.base"))?;
             validate_expr(index, &format!("{path}.index"))?;
+        }
+        ExprKind::Member { base, field, .. } => {
+            if field.is_empty() {
+                return Err(SchemaError::new(
+                    format!("{path}.field"),
+                    "must not be empty",
+                ));
+            }
+            validate_expr(base, &format!("{path}.base"))?;
+        }
+        ExprKind::Cond {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            validate_expr(cond, &format!("{path}.cond"))?;
+            validate_expr(then_branch, &format!("{path}.then_branch"))?;
+            validate_expr(else_branch, &format!("{path}.else_branch"))?;
+        }
+        ExprKind::SizeOf { operand } => {
+            validate_expr(operand, &format!("{path}.operand"))?;
+        }
+        ExprKind::InitList { elems } => {
+            for (index, elem) in elems.iter().enumerate() {
+                validate_expr(elem, &format!("{path}.elems[{index}]"))?;
+            }
         }
         ExprKind::Call { callee, args } => {
             if callee.is_empty() {
@@ -476,6 +788,31 @@ fn validate_ty(ty: &Ty, path: &str) -> Result<(), SchemaError> {
             Ok(())
         }
         Ty::Pointer { pointee, .. } => validate_ty(pointee, &format!("{path}.pointee")),
+        Ty::Array { elem, len } => {
+            if *len == 0 {
+                return Err(SchemaError::new(
+                    format!("{path}.len"),
+                    "an array needs a positive length",
+                ));
+            }
+            validate_ty(elem, &format!("{path}.elem"))?;
+            if matches!(**elem, Ty::Void) {
+                return Err(SchemaError::new(
+                    format!("{path}.elem"),
+                    "an array cannot have void elements",
+                ));
+            }
+            Ok(())
+        }
+        Ty::Record { name } | Ty::Enum { name } => {
+            if name.is_empty() {
+                return Err(SchemaError::new(
+                    format!("{path}.name"),
+                    "must not be empty",
+                ));
+            }
+            Ok(())
+        }
         Ty::Named { name, canonical } => {
             if name.is_empty() {
                 return Err(SchemaError::new(
@@ -539,6 +876,9 @@ mod tests {
             },
             translation_units: vec![TranslationUnit {
                 file: "add.c".to_string(),
+                records: Vec::new(),
+                enums: Vec::new(),
+                globals: Vec::new(),
                 functions: vec![Function {
                     name: "add".to_string(),
                     linkage: "external".to_string(),

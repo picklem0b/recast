@@ -29,6 +29,16 @@ pub enum Type {
         pointee: TypeId,
         is_const: bool,
     },
+    Array {
+        elem: TypeId,
+        len: u64,
+    },
+    Record {
+        name: String,
+    },
+    Enum {
+        name: String,
+    },
     Named {
         name: String,
         canonical: TypeId,
@@ -126,7 +136,7 @@ impl TypeTable {
             match ty {
                 Type::Unknown { .. } => return true,
                 Type::Named { canonical, .. } => current = *canonical,
-                Type::Pointer { pointee, .. } => {
+                Type::Pointer { pointee, .. } | Type::Array { elem: pointee, .. } => {
                     if self.contains_unknown(*pointee) {
                         return true;
                     }
@@ -158,6 +168,8 @@ impl TypeTable {
                 let qualifier = if *is_const { "const" } else { "mut" };
                 format!("*{qualifier} {}", self.render(*pointee))
             }
+            Some(Type::Array { elem, len }) => format!("[{}; {len}]", self.render(*elem)),
+            Some(Type::Record { name }) | Some(Type::Enum { name }) => name.clone(),
             Some(Type::Named { name, .. }) => name.clone(),
             Some(Type::Unknown { spelling }) => format!("<unknown {spelling}>"),
             None => format!("<missing {id}>"),

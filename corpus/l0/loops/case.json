@@ -1,0 +1,86 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "sum_to",
+      "args": [
+        10
+      ]
+    },
+    {
+      "function": "skip_three",
+      "args": [
+        6
+      ]
+    },
+    {
+      "function": "gcd",
+      "args": [
+        48,
+        18
+      ]
+    },
+    {
+      "function": "gcd",
+      "args": [
+        17,
+        5
+      ]
+    },
+    {
+      "function": "collatz_steps",
+      "args": [
+        27
+      ]
+    },
+    {
+      "function": "factorial",
+      "args": [
+        6
+      ]
+    },
+    {
+      "function": "nested_loops",
+      "args": [
+        4
+      ]
+    },
+    {
+      "function": "sum_to",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "skip_three",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "factorial",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "collatz_steps",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "gcd",
+      "args": [
+        5,
+        0
+      ]
+    },
+    {
+      "function": "nested_loops",
+      "args": [
+        0
+      ]
+    }
+  ]
+}

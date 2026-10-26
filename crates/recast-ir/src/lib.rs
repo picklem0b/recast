@@ -13,8 +13,9 @@ pub mod validate;
 pub use dump::dump;
 pub use id::{ItemId, NodeId, TypeId};
 pub use program::{
-    Block, Callee, Endian, Expr, ExprKind, FileInfo, FnSig, Function, Linkage, Param, Program,
-    Provenance, Span, Stmt, StmtKind, Target, ValueCategory, SCHEMA_NAME, SCHEMA_VERSION,
+    Block, Callee, Case, Endian, EnumDef, Enumerator, Expr, ExprKind, FieldDef, FileInfo, FnSig,
+    Function, Global, Linkage, Param, Program, Provenance, RecordDef, Span, Stmt, StmtKind, Target,
+    ValueCategory, SCHEMA_NAME, SCHEMA_VERSION,
 };
 pub use types::{Type, TypeTable};
 pub use validate::{validate, ValidationError};

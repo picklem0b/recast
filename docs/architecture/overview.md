@@ -62,7 +62,7 @@ These apply to every component.
 
 ### 2.5 Safety of the tool itself
 
-- recast processes untrusted source code. The exporter MUST NOT execute any code from the input. Verification stages that _do_ execute code (running original and translated programs, fuzzing) MUST run in a sandbox with no network access and limited filesystem access (see `07-verification-specification.md`).
+- recast processes untrusted source code. The exporter MUST NOT execute any code from the input. Verification stages that _do_ execute code (running original and translated programs, fuzzing) MUST run in a sandbox with no network access and limited filesystem access (see `docs/architecture/verification.md`).
 
 ## 3. Technology choices
 
@@ -78,7 +78,7 @@ These apply to every component.
 | Parallelism               | Work-stealing thread pool, per translation unit and per call-graph strongly connected component                                                   | Scales on many-core machines                                                                                                                                                                                                                |
 | Generated code formatting | `rustfmt` with a pinned config                                                                                                                    | Stable, readable output                                                                                                                                                                                                                     |
 | Verification tooling      | `cargo check`, `clippy`, `cargo test`, Miri, `cargo-fuzz` or AFL++, AddressSanitizer/UBSan/TSan on the original, optional Kani for bounded proofs | Standard ecosystem tools                                                                                                                                                                                                                    |
-| Mixed-language builds     | Generated `extern "C"` shims, `cbindgen` for headers, optional `cxx` where suitable, Corrosion for CMake, `rules_rust` for Bazel                  | See `08-interop-and-build-integration.md`                                                                                                                                                                                                   |
+| Mixed-language builds     | Generated `extern "C"` shims, `cbindgen` for headers, optional `cxx` where suitable, Corrosion for CMake, `rules_rust` for Bazel                  | See `docs/guides/interop-and-builds.md`                                                                                                                                                                                                   |
 
 Where the table says "optional", the builder MAY defer it; where it names a specific tool, substitute only through a recorded decision.
 
@@ -137,13 +137,13 @@ recast-cli <- recast-orchestrator
 ### 5.2 Frontend (`recast-frontend`)
 
 - Reads exporter output for all TUs and merges items by USR (a header included in many TUs yields one item).
-- Builds TIR (see `04-ir-specification.md`).
-- Resolves **configurations**: determines, per source line or item, the condition under which it is active (see section 6 of `05-analysis-specification.md`); produces one TIR per configuration of interest, or one TIR with conditional items.
+- Builds TIR (see `docs/architecture/ir.md`).
+- Resolves **configurations**: determines, per source line or item, the condition under which it is active (see section 6 of `docs/architecture/analysis.md`); produces one TIR per configuration of interest, or one TIR with conditional items.
 - Validates TIR invariants (see `04`) and fails fast on violations.
 
 ### 5.3 Analysis (`recast-analysis`)
 
-- Computes the facts defined in `05-analysis-specification.md` and stores them in the TIR fact tables.
+- Computes the facts defined in `docs/architecture/analysis.md` and stores them in the TIR fact tables.
 - Provides the _ownership decision_ for every pointer-typed place and the _UB findings_ list.
 - Exposes a stable API: `analyze(tir: &mut Tir, config: &AnalysisConfig) -> AnalysisSummary`.
 
@@ -157,16 +157,16 @@ recast-cli <- recast-orchestrator
 
 ### 5.5 Runtime support (`recast-rt`)
 
-- A small Rust crate that generated code depends on. Contains the checked cell types, byte string, exception type, C-library shims and boundary helpers. See `06-translation-specification.md` section 9.
+- A small Rust crate that generated code depends on. Contains the checked cell types, byte string, exception type, C-library shims and boundary helpers. See `docs/architecture/translation.md` section 9.
 - MUST be `#![forbid(unsafe_code)]` except in clearly separated modules (`ffi`, `raw`) that wrap unavoidable `unsafe` with documented invariants.
 
 ### 5.6 Verification and safety gate (`recast-verify`)
 
-- Implements the verification ladder and the gate. See `07-verification-specification.md`.
+- Implements the verification ladder and the gate. See `docs/architecture/verification.md`.
 
 ### 5.7 Interop (`recast-interop`)
 
-- Generates `extern "C"` shims, C headers (via cbindgen-style generation), layout assertions and build glue. See `08-interop-and-build-integration.md`.
+- Generates `extern "C"` shims, C headers (via cbindgen-style generation), layout assertions and build glue. See `docs/guides/interop-and-builds.md`.
 
 ### 5.8 Orchestrator (`recast-orchestrator`)
 
@@ -174,7 +174,7 @@ recast-cli <- recast-orchestrator
 
 ## 6. Data flow and artifacts
 
-All intermediate artifacts are written under the output directory (`recast-out/` by default; see `09-cli-and-configuration.md`) so any stage can be re-run or inspected.
+All intermediate artifacts are written under the output directory (`recast-out/` by default; see `docs/guides/cli-and-configuration.md`) so any stage can be re-run or inspected.
 
 | Stage        | Reads                              | Writes                                                  |
 | ------------ | ---------------------------------- | ------------------------------------------------------- |
@@ -216,7 +216,7 @@ Panics inside recast indicate a recast bug. The orchestrator MUST catch them at 
 
 ## 9. Extensibility points
 
-- **New rules**: translation rules are registered in a rule table keyed by pattern; each has an ID, a precondition on TIR plus facts, and a rewrite. Adding a rule requires a worked example in `14-worked-examples.md` and golden tests.
+- **New rules**: translation rules are registered in a rule table keyed by pattern; each has an ID, a precondition on TIR plus facts, and a rewrite. Adding a rule requires a worked example in `docs/reference/worked-examples.md` and golden tests.
 - **New analyses**: implement the `Analysis` trait (inputs: TIR + prior facts; output: facts) and declare dependencies; the orchestrator orders them.
 - **Solver backends**: implement `ConstraintSolver`.
 - **Verification rungs**: implement `VerificationRung` with a declared strength and cost class.

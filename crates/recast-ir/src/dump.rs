@@ -3,7 +3,8 @@
 use std::fmt::Write;
 
 use crate::program::{
-    Block, Callee, Expr, ExprKind, Function, Program, Stmt, StmtKind, SCHEMA_NAME,
+    Block, Callee, EnumDef, Expr, ExprKind, Function, Global, Program, RecordDef, Stmt, StmtKind,
+    SCHEMA_NAME,
 };
 use crate::types::TypeTable;
 
@@ -41,11 +42,65 @@ pub fn dump(program: &Program) -> String {
             .expect("writing to a String cannot fail");
     }
 
+    for record in &program.records {
+        dump_record(record, &program.types, &mut out);
+    }
+    for item in &program.enums {
+        dump_enum(item, &program.types, &mut out);
+    }
+    for global in &program.globals {
+        dump_global(global, &program.types, &mut out);
+    }
     for function in &program.functions {
         dump_function(function, &program.types, &mut out);
     }
 
     out
+}
+
+fn dump_record(record: &RecordDef, types: &TypeTable, out: &mut String) {
+    writeln!(
+        out,
+        "record {} [{}] size={} align={}",
+        record.name, record.id, record.size, record.align
+    )
+    .expect("writing to a String cannot fail");
+    for field in &record.fields {
+        writeln!(out, "  {}: {}", field.name, types.render(field.ty))
+            .expect("writing to a String cannot fail");
+    }
+}
+
+fn dump_enum(item: &EnumDef, types: &TypeTable, out: &mut String) {
+    writeln!(
+        out,
+        "enum {} [{}] underlying={}",
+        item.name,
+        item.id,
+        types.render(item.underlying)
+    )
+    .expect("writing to a String cannot fail");
+    for variant in &item.variants {
+        writeln!(out, "  {} = {}", variant.name, variant.value)
+            .expect("writing to a String cannot fail");
+    }
+}
+
+fn dump_global(global: &Global, types: &TypeTable, out: &mut String) {
+    let value = match &global.init {
+        Some(init) => format!(" = {}", render_expr(init, types)),
+        None => String::new(),
+    };
+    writeln!(
+        out,
+        "global {} [{}] {} {}{}",
+        global.name,
+        global.id,
+        if global.is_const { "const" } else { "var" },
+        types.render(global.ty),
+        value
+    )
+    .expect("writing to a String cannot fail");
 }
 
 fn dump_function(function: &Function, types: &TypeTable, out: &mut String) {
@@ -149,6 +204,26 @@ fn dump_stmt(stmt: &Stmt, types: &TypeTable, indent: usize, out: &mut String) {
             }
             dump_block(body, types, indent + 2, out);
         }
+        StmtKind::DoWhile { body, cond } => {
+            writeln!(out, "{pad}@{node} do").expect("writing to a String cannot fail");
+            dump_block(body, types, indent + 2, out);
+            writeln!(out, "{pad}  while {}", render_expr(cond, types))
+                .expect("writing to a String cannot fail");
+        }
+        StmtKind::Switch { scrutinee, cases } => {
+            writeln!(out, "{pad}@{node} switch {}", render_expr(scrutinee, types))
+                .expect("writing to a String cannot fail");
+            for case in cases {
+                match case.label {
+                    Some(label) => {
+                        writeln!(out, "{pad}  case {label} falls={}", case.falls_through)
+                    }
+                    None => writeln!(out, "{pad}  default falls={}", case.falls_through),
+                }
+                .expect("writing to a String cannot fail");
+                dump_block(&case.body, types, indent + 4, out);
+            }
+        }
         StmtKind::Return(value) => {
             match value {
                 Some(value) => writeln!(out, "{pad}@{node} return {}", render_expr(value, types)),
@@ -174,9 +249,39 @@ fn render_expr(expr: &Expr, types: &TypeTable) -> String {
         ExprKind::IntLit(value) => format!("@{node} int {value}"),
         ExprKind::FloatLit(value) => format!("@{node} float {value}"),
         ExprKind::StringLit(value) => format!("@{node} string {value:?}"),
+        ExprKind::CharLit(value) => format!("@{node} char {value}"),
         ExprKind::BoolLit(value) => format!("@{node} bool {value}"),
         ExprKind::Null => format!("@{node} null"),
         ExprKind::Local(name) => format!("@{node} local {name}"),
+        ExprKind::Global(id) => format!("@{node} global {id}"),
+        ExprKind::EnumConst { item, value } => format!("@{node} enumerator {item} = {value}"),
+        ExprKind::Member { base, field, arrow } => format!(
+            "@{node} member {}{field} ({})",
+            if *arrow { "->" } else { "." },
+            render_expr(base, types)
+        ),
+        ExprKind::Cond {
+            cond,
+            then_branch,
+            else_branch,
+        } => format!(
+            "@{node} cond ({}) ({}) ({})",
+            render_expr(cond, types),
+            render_expr(then_branch, types),
+            render_expr(else_branch, types)
+        ),
+        ExprKind::InitList(elems) => {
+            let elems = elems
+                .iter()
+                .map(|elem| format!("({})", render_expr(elem, types)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if elems.is_empty() {
+                format!("@{node} init")
+            } else {
+                format!("@{node} init {elems}")
+            }
+        }
         ExprKind::Unary {
             op,
             operand,

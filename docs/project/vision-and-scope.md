@@ -68,7 +68,7 @@ The product the customer receives is the combination of the Rust output and the 
 - Matching hand-tuned performance on pointer-intensive code in early milestones. Runtime-checked fallbacks cost performance by design, and the report quantifies it.
 - Translating build systems wholesale. recast integrates with existing builds; it does not replace them.
 - Translating other languages (Objective-C, Fortran, and so on).
-- Proving general equivalence of arbitrary programs. recast claims only what its verification layers actually establish (see `07-verification-specification.md`).
+- Proving general equivalence of arbitrary programs. recast claims only what its verification layers actually establish (see `docs/architecture/verification.md`).
 
 ## 7. Principles
 
@@ -83,7 +83,7 @@ The product the customer receives is the combination of the Rust output and the 
 
 ## 8. Supported language subset
 
-The full C++ language is too large to target at once. recast defines **language levels**. Each level is a strict superset of the previous one. Milestones in `11-roadmap-and-milestones.md` map to these levels.
+The full C++ language is too large to target at once. recast defines **language levels**. Each level is a strict superset of the previous one. Milestones in `docs/project/roadmap.md` map to these levels.
 
 ### Level L0: Well-behaved C
 
@@ -110,7 +110,7 @@ L2 plus: multiple inheritance of interfaces; curiously recurring template patter
 - Self-modifying code, `dlopen`-based dynamic loading logic
 - Variadic functions defined by the user (calling `printf` with literal formats is supported)
 - Template metaprogramming that depends on SFINAE tricks to select behavior and cannot be resolved by instantiation
-- Code that relies on undefined behavior in a way the UB analysis cannot classify (see `05-analysis-specification.md`)
+- Code that relies on undefined behavior in a way the UB analysis cannot classify (see `docs/architecture/analysis.md`)
 
 "Flagged and preserved behind FFI" means: the Rust crate contains a stub with the same signature that calls the original C/C++ implementation, which is kept compiled in. The migration is incomplete for that item, but the build and behavior are intact, and the report lists it.
 

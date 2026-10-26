@@ -1,0 +1,22 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    { "function": "classify", "args": [0] },
+    { "function": "classify", "args": [1] },
+    { "function": "classify", "args": [7] },
+    { "function": "classify", "args": [-3] },
+    { "function": "scan", "args": [[1, 2, 3, 4], 100] },
+    { "function": "scan", "args": [[1, -2, 3, 4], 4] },
+    { "function": "scan", "args": [[5, 5, 5], 6] },
+    { "function": "scan", "args": [[], 0] },
+    { "function": "count_positive", "args": [[1, -1, 2, -2, 3, -3, 4, 5]] },
+    { "function": "count_positive", "args": [[-1, -2]] },
+    { "function": "count_positive", "args": [[1, 2, 3, 4, 5, 6]] },
+    { "function": "count_positive", "args": [[1, -1]] },
+    { "function": "count_positive", "args": [[1, -1, 1, -1]] },
+    { "function": "low_nibble", "args": [0] },
+    { "function": "low_nibble", "args": [15] },
+    { "function": "low_nibble", "args": [31] },
+    { "function": "low_nibble", "args": [7] }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {"function": "color_index", "args": [0]},
+    {"function": "color_index", "args": [5]},
+    {"function": "color_index", "args": [6]},
+    {"function": "color_index", "args": [9]},
+    {"function": "is_warm", "args": [0]},
+    {"function": "is_warm", "args": [6]},
+    {"function": "next_color", "args": [0]},
+    {"function": "next_color", "args": [5]},
+    {"function": "next_color", "args": [6]}
+  ]
+}

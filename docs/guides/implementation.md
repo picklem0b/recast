@@ -1,6 +1,6 @@
 # 15. Builder Brief
 
-Instructions for the AI (or any engineer) building recast from this document set. Read this file second, right after `00-README.md`.
+Instructions for the AI (or any engineer) building recast from this document set. Read this file second, right after `docs/README.md`.
 
 ---
 
@@ -10,15 +10,15 @@ Build **recast**: a deterministic translator from C/C++ to Rust that (1) underst
 
 ## 2. Reading order
 
-1. `00-README.md` (index, conventions)
-2. `15-builder-brief.md` (this file)
-3. `01-vision-and-scope.md`, `02-glossary.md`
-4. `03-architecture.md`, `04-ir-specification.md`
-5. `05-analysis-specification.md`, `06-translation-specification.md`
-6. `07-verification-specification.md`, `08-interop-and-build-integration.md`
-7. `09-cli-and-configuration.md`, `10-testing-and-corpus.md`
-8. `11-roadmap-and-milestones.md` (what to build in what order)
-9. `12-risks-decisions-open-questions.md`, `13-research-and-references.md`, `14-worked-examples.md`
+1. `docs/README.md` (index, conventions)
+2. `docs/guides/implementation.md` (this file)
+3. `docs/project/vision-and-scope.md`, `docs/reference/glossary.md`
+4. `docs/architecture/overview.md`, `docs/architecture/ir.md`
+5. `docs/architecture/analysis.md`, `docs/architecture/translation.md`
+6. `docs/architecture/verification.md`, `docs/guides/interop-and-builds.md`
+7. `docs/guides/cli-and-configuration.md`, `docs/guides/testing-and-corpus.md`
+8. `docs/project/roadmap.md` (what to build in what order)
+9. `docs/project/decisions-and-risks.md`, `docs/project/research.md`, `docs/reference/worked-examples.md`
 
 ## 3. Operating rules (non-negotiable)
 
@@ -80,7 +80,7 @@ Do not begin a milestone until the previous exit criteria hold.
 - **Analysis cannot decide:** emit `Unknown`, move up a tier, add a finding; improve precision later.
 - **Construct is hard:** flag it (T4), add it to the known-hard corpus with the expected flag, move on.
 - **Verification is slow:** reduce budget or profile; never skip silently; list the skipped rung.
-- **A test fails and you suspect the test:** prove it by reading the original semantics; fix the test with a note, never loosen a comparison to make it pass.
+- **A failing test may be the test's fault:** prove that by reading the original semantics; fix the test with a note. Never loosen a comparison to make it pass.
 
 ## 9. Things that look tempting and are wrong
 
