@@ -33,7 +33,7 @@ becomes:
 
 ```rust
 #![forbid(unsafe_code)]
-#![allow(dead_code, non_camel_case_types, non_snake_case)]
+#![allow(dead_code, non_camel_case_types, non_snake_case, unused_labels)]
 
 /// recast: translated from input.c:3
 pub fn sum(a: &[i32]) -> i32 {

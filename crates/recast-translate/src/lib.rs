@@ -12,6 +12,7 @@
 
 pub mod rust;
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -58,7 +59,7 @@ pub fn translate(program: &Program) -> Result<Translation, TranslateError> {
     let mut file = RFile {
         attrs: vec![
             "#![forbid(unsafe_code)]".to_string(),
-            "#![allow(dead_code, non_camel_case_types, non_snake_case)]".to_string(),
+            "#![allow(dead_code, non_camel_case_types, non_snake_case, unused_labels)]".to_string(),
         ],
         items: Vec::new(),
         fns: Vec::new(),
@@ -133,6 +134,7 @@ fn append_global(
     let ty = type_name(program, global.ty)
         .map_err(|message| TranslateError::new(&global.name, message))?;
     let translator = Translator {
+        labels: Cell::new(0),
         program,
         function: &global.name,
         ret: global.ty,
@@ -166,16 +168,20 @@ struct Context {
     /// The label a `continue` must jump to when it targets a loop whose step
     /// runs after the body.
     continue_label: Option<String>,
+    /// The label a `break` must jump to when the loop body is a labeled block,
+    /// because an unlabeled `break` inside such a block is an error.
+    break_label: Option<String>,
     /// Whether the statement is directly inside a `switch` arm.
     in_arm: bool,
 }
 
 impl Context {
-    fn loop_body(&self, continue_label: Option<String>) -> Self {
+    fn loop_body(&self, continue_label: Option<String>, break_label: Option<String>) -> Self {
         Self {
             break_depth: self.break_depth + 1,
             can_continue: true,
             continue_label,
+            break_label,
             in_arm: false,
         }
     }
@@ -185,6 +191,8 @@ impl Context {
             break_depth: 0,
             can_continue: self.can_continue,
             continue_label: self.continue_label.clone(),
+            // A `break` inside an arm leaves the switch, not the loop.
+            break_label: None,
             in_arm: true,
         }
     }
@@ -196,6 +204,9 @@ struct Translator<'a> {
     ret: TypeId,
     assigned: BTreeSet<String>,
     slices: Vec<SlicePlan>,
+    /// Serial for generated labels, so two nested loops cannot shadow another
+    /// loop's label.
+    labels: Cell<u32>,
 }
 
 impl<'a> Translator<'a> {
@@ -247,7 +258,15 @@ impl<'a> Translator<'a> {
             ret: function.signature.ret,
             assigned,
             slices,
+            labels: Cell::new(0),
         })
+    }
+
+    /// A distinct label name for one generated loop or block.
+    fn label(&self, stem: &str) -> String {
+        let serial = self.labels.get() + 1;
+        self.labels.set(serial);
+        format!("{stem}_{serial}")
     }
 
     fn function_item(&self, function: &Function) -> Result<RFn, TranslateError> {
@@ -365,7 +384,7 @@ impl<'a> Translator<'a> {
                 },
             }],
             StmtKind::While { cond, body } => {
-                let body_ctx = ctx.loop_body(None);
+                let body_ctx = ctx.loop_body(None, None);
                 vec![RStmt::While {
                     cond: self.condition(cond)?,
                     body: self.nested(body, &body_ctx)?,
@@ -391,7 +410,10 @@ impl<'a> Translator<'a> {
                         "a break in the middle of a switch case needs a labeled block (document 06 section 10.2); M1 supports only a trailing break",
                     ));
                 }
-                vec![RStmt::Break]
+                match &ctx.break_label {
+                    Some(label) => vec![RStmt::BreakLabel(label.clone())],
+                    None => vec![RStmt::Break],
+                }
             }
             StmtKind::Continue => {
                 if !ctx.can_continue {
@@ -425,27 +447,33 @@ impl<'a> Translator<'a> {
         };
         if block_has_continue(body) {
             // `continue` must still run the step, so the body is a labeled
-            // block that `continue` leaves and the step runs after it.
-            let label = "for_body".to_string();
-            let body_ctx = ctx.loop_body(Some(label.clone()));
+            // block that `continue` leaves and the step runs after it. A
+            // `break` inside that block cannot leave the loop unlabeled, so
+            // the loop carries a label of its own.
+            let body_label = self.label("for_body");
+            let loop_label = self.label("for_loop");
+            let body_ctx = ctx.loop_body(Some(body_label.clone()), Some(loop_label.clone()));
             let mut inner = vec![RStmt::If {
                 cond: RExpr::Unary {
                     op: "!",
                     expr: Box::new(condition),
                 },
-                then_body: vec![RStmt::Break],
+                then_body: vec![RStmt::BreakLabel(loop_label.clone())],
                 else_body: None,
             }];
             inner.push(RStmt::Block {
-                label: Some(label),
+                label: Some(body_label),
                 body: self.nested(body, &body_ctx)?,
             });
             if let Some(step) = step {
                 inner.push(self.expr_statement(step)?);
             }
-            out.push(RStmt::Loop { body: inner });
+            out.push(RStmt::Loop {
+                label: Some(loop_label),
+                body: inner,
+            });
         } else {
-            let body_ctx = ctx.loop_body(None);
+            let body_ctx = ctx.loop_body(None, None);
             let mut body_stmts = self.nested(body, &body_ctx)?;
             if let Some(step) = step {
                 body_stmts.push(self.expr_statement(step)?);
@@ -466,26 +494,36 @@ impl<'a> Translator<'a> {
     ) -> Result<Vec<RStmt>, TranslateError> {
         let condition = self.condition(cond)?;
         let mut inner = Vec::new();
+        let mut loop_label = None;
         if block_has_continue(body) {
-            let label = "do_body".to_string();
-            let body_ctx = ctx.loop_body(Some(label.clone()));
+            let body_label = self.label("do_body");
+            let label = self.label("do_loop");
+            let body_ctx = ctx.loop_body(Some(body_label.clone()), Some(label.clone()));
             inner.push(RStmt::Block {
-                label: Some(label),
+                label: Some(body_label),
                 body: self.nested(body, &body_ctx)?,
             });
+            loop_label = Some(label);
         } else {
-            let body_ctx = ctx.loop_body(None);
+            let body_ctx = ctx.loop_body(None, None);
             inner.extend(self.nested(body, &body_ctx)?);
         }
-        inner.push(RStmt::If {
+        let finish = RStmt::If {
             cond: RExpr::Unary {
                 op: "!",
                 expr: Box::new(condition),
             },
-            then_body: vec![RStmt::Break],
+            then_body: vec![match &loop_label {
+                Some(label) => RStmt::BreakLabel(label.clone()),
+                None => RStmt::Break,
+            }],
             else_body: None,
-        });
-        Ok(vec![RStmt::Loop { body: inner }])
+        };
+        inner.push(finish);
+        Ok(vec![RStmt::Loop {
+            label: loop_label,
+            body: inner,
+        }])
     }
 
     fn switch(
@@ -550,6 +588,19 @@ impl<'a> Translator<'a> {
                 patterns: vec![Pattern::Default],
                 body: Vec::new(),
             });
+        }
+        // `_` matches everything, so a `default` that is not last in C would
+        // make every later case dead in Rust. Each arm's body is complete
+        // (M1 refuses fallthrough with statements), so moving the `default`
+        // arm to the end keeps C's meaning.
+        if let Some(index) = arms
+            .iter()
+            .position(|arm| arm.patterns.contains(&Pattern::Default))
+        {
+            if index + 1 != arms.len() {
+                let default_arm = arms.remove(index);
+                arms.push(default_arm);
+            }
         }
         Ok(RStmt::Match { scrutinee, arms })
     }

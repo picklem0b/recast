@@ -272,7 +272,10 @@ pub enum Stmt {
         cond: Expr,
         body: Vec<Stmt>,
     },
+    /// A loop, optionally labeled so a `break` from inside a nested labeled
+    /// block can still leave the loop itself.
     Loop {
+        label: Option<String>,
         body: Vec<Stmt>,
     },
     /// A block, optionally labeled so an inner `continue` can leave it.
@@ -478,8 +481,15 @@ impl Stmt {
                 }
                 let _ = writeln!(out, "{pad}}}");
             }
-            Stmt::Loop { body } => {
-                let _ = writeln!(out, "{pad}loop {{");
+            Stmt::Loop { label, body } => {
+                match label {
+                    Some(label) => {
+                        let _ = writeln!(out, "{pad}'{label}: loop {{");
+                    }
+                    None => {
+                        let _ = writeln!(out, "{pad}loop {{");
+                    }
+                }
                 for stmt in body {
                     stmt.render(out, depth + 1);
                 }
