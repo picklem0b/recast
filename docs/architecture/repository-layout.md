@@ -189,3 +189,5 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.0` to `v1.1.5` | M1 build points: schema, IR, exporter, frontend, analysis, translation.  |
 | `v1.1.6` to `v1.1.10`| M1 build points: verification, CLI, corpus, CI and documents.            |
 | `v1.1.11`            | M1 exit criteria.                                                        |
+| `v1.1.12`            | M1 references point at the page tags.                                    |
+| `v1.1.13`            | M1 audit repairs.                                                        |
