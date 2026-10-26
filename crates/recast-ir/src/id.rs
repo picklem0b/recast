@@ -20,6 +20,21 @@ impl ItemId {
         Self(format!("fn:c:@F@{name}"))
     }
 
+    /// Build the identifier for a record (struct or union) in C.
+    pub fn record(name: &str) -> Self {
+        Self(format!("record:c:@S@{name}"))
+    }
+
+    /// Build the identifier for an enum in C.
+    pub fn enumerated(name: &str) -> Self {
+        Self(format!("enum:c:@E@{name}"))
+    }
+
+    /// Build the identifier for a file-scope variable in C.
+    pub fn global(name: &str) -> Self {
+        Self(format!("var:c:@{name}"))
+    }
+
     /// Return the stable text form.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -90,6 +105,13 @@ mod tests {
     #[test]
     fn function_ids_are_stable() {
         assert_eq!(ItemId::function("add").as_str(), "fn:c:@F@add");
+    }
+
+    #[test]
+    fn declaration_ids_are_namespaced() {
+        assert_eq!(ItemId::record("point").as_str(), "record:c:@S@point");
+        assert_eq!(ItemId::enumerated("color").as_str(), "enum:c:@E@color");
+        assert_eq!(ItemId::global("LIMIT").as_str(), "var:c:@LIMIT");
     }
 
     #[test]

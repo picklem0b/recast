@@ -153,6 +153,78 @@ pub struct Function {
     pub provenance: Provenance,
 }
 
+/// One field of a record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDef {
+    pub name: String,
+    pub ty: TypeId,
+}
+
+/// A struct or union definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordDef {
+    pub id: ItemId,
+    pub name: String,
+    pub fields: Vec<FieldDef>,
+    /// `sizeof` under the target, in bytes; zero when the exporter did not
+    /// report a layout.
+    pub size: u64,
+    pub align: u64,
+    pub provenance: Provenance,
+}
+
+impl RecordDef {
+    /// The index of a field by name.
+    pub fn field(&self, name: &str) -> Option<usize> {
+        self.fields.iter().position(|field| field.name == name)
+    }
+}
+
+/// One enumerator and its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Enumerator {
+    pub name: String,
+    pub value: i64,
+}
+
+/// An enum definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub id: ItemId,
+    pub name: String,
+    pub underlying: TypeId,
+    pub variants: Vec<Enumerator>,
+    pub provenance: Provenance,
+}
+
+impl EnumDef {
+    /// The value of an enumerator by name.
+    pub fn variant(&self, name: &str) -> Option<&Enumerator> {
+        self.variants.iter().find(|variant| variant.name == name)
+    }
+}
+
+/// A file-scope constant or variable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Global {
+    pub id: ItemId,
+    pub name: String,
+    pub ty: TypeId,
+    pub init: Option<Expr>,
+    pub is_const: bool,
+    pub linkage: Linkage,
+    pub provenance: Provenance,
+}
+
+/// One arm of a `switch`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Case {
+    /// `None` is the `default` arm.
+    pub label: Option<i64>,
+    pub body: Block,
+    pub falls_through: bool,
+}
+
 /// A lexical block.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Block {
@@ -191,6 +263,14 @@ pub enum StmtKind {
         step: Option<Expr>,
         body: Block,
     },
+    DoWhile {
+        body: Block,
+        cond: Expr,
+    },
+    Switch {
+        scrutinee: Expr,
+        cases: Vec<Case>,
+    },
     Return(Option<Expr>),
     Break,
     Continue,
@@ -213,9 +293,28 @@ pub enum ExprKind {
     IntLit(i64),
     FloatLit(f64),
     StringLit(String),
+    CharLit(u32),
     BoolLit(bool),
     Null,
     Local(String),
+    /// A reference to a file-scope constant or variable.
+    Global(ItemId),
+    /// A reference to an enumerator, carrying the value Clang assigned.
+    EnumConst {
+        item: ItemId,
+        value: i64,
+    },
+    Member {
+        base: Box<Expr>,
+        field: String,
+        arrow: bool,
+    },
+    Cond {
+        cond: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
+    InitList(Vec<Expr>),
     Unary {
         op: String,
         operand: Box<Expr>,
@@ -263,6 +362,9 @@ pub struct Program {
     pub target: Target,
     pub files: Vec<FileInfo>,
     pub functions: Vec<Function>,
+    pub records: Vec<RecordDef>,
+    pub enums: Vec<EnumDef>,
+    pub globals: Vec<Global>,
     pub types: TypeTable,
 }
 
@@ -274,6 +376,9 @@ impl Program {
             target,
             files: Vec::new(),
             functions: Vec::new(),
+            records: Vec::new(),
+            enums: Vec::new(),
+            globals: Vec::new(),
             types: TypeTable::new(),
         }
     }
@@ -291,6 +396,31 @@ impl Program {
     /// Look up a function by its item identifier.
     pub fn function(&self, id: &ItemId) -> Option<&Function> {
         self.functions.iter().find(|function| &function.id == id)
+    }
+
+    /// Look up a function by name.
+    pub fn function_named(&self, name: &str) -> Option<&Function> {
+        self.functions.iter().find(|function| function.name == name)
+    }
+
+    /// Look up a record by name.
+    pub fn record(&self, name: &str) -> Option<&RecordDef> {
+        self.records.iter().find(|record| record.name == name)
+    }
+
+    /// Look up an enum by name.
+    pub fn enum_named(&self, name: &str) -> Option<&EnumDef> {
+        self.enums.iter().find(|item| item.name == name)
+    }
+
+    /// Look up a global by name.
+    pub fn global_named(&self, name: &str) -> Option<&Global> {
+        self.globals.iter().find(|global| global.name == name)
+    }
+
+    /// Look up a global by its item identifier.
+    pub fn global(&self, id: &ItemId) -> Option<&Global> {
+        self.globals.iter().find(|global| &global.id == id)
     }
 
     /// Run every M0 validation invariant.
