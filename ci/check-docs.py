@@ -14,15 +14,18 @@ SKIP_PREFIXES = ("http://", "https://", "mailto:", "#")
 
 
 def tracked_markdown() -> list[Path]:
+    # Include untracked documents so a new page is checked before it is staged.
+    # Deleted-but-still-tracked paths are skipped; the next commit removes them.
     result = subprocess.run(
-        ["git", "ls-files", "*.md"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.md"],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         return sorted(ROOT.rglob("*.md"))
-    return [ROOT / line for line in result.stdout.splitlines() if line]
+    paths = {ROOT / line for line in result.stdout.splitlines() if line}
+    return sorted(path for path in paths if path.is_file())
 
 
 def main() -> int:
