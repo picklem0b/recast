@@ -149,16 +149,23 @@ dependencies = [
 [[package]]
 name = "recast-analysis"
 version = "1.0.11"
+dependencies = [
+ "recast-ir",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "recast-cli"
 version = "1.0.11"
 dependencies = [
  "clap",
+ "recast-analysis",
  "recast-frontend",
  "recast-ir",
  "recast-schema",
  "recast-translate",
+ "recast-verify",
 ]
 
 [[package]]
@@ -209,6 +216,11 @@ dependencies = [
 [[package]]
 name = "recast-verify"
 version = "1.0.11"
+dependencies = [
+ "recast-ir",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "serde"
