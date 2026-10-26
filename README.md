@@ -4,7 +4,7 @@
 
 ## Status
 
-**M1 complete.** The M0 slice is tagged `v1.0.1` to `v1.0.11` and the M1 state is tagged `v1.1.0`. [`docs/audits/m0.md`](docs/audits/m0.md) and [`docs/audits/m1.md`](docs/audits/m1.md) record the checks and remaining limits. `ci/m0-exit.sh` checks the original vertical slice, and `ci/m1-exit.sh` runs the L0 corpus: 7 cases, 90 differential calls, three 10^6-iteration property sweeps and operator mutation, all passing. The specification documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
+**M1 complete.** The M0 slice is tagged `v1.0.1` to `v1.0.11`; the M1 build points are `v1.1.0` to `v1.1.10` and `v1.1.11` records the exit criteria. [`docs/audits/m0.md`](docs/audits/m0.md) and [`docs/audits/m1.md`](docs/audits/m1.md) record the checks and remaining limits. `ci/m0-exit.sh` checks the original vertical slice, and `ci/m1-exit.sh` runs the L0 corpus: 7 cases, 90 differential calls, three 10^6-iteration property sweeps and operator mutation, all passing. The specification documents define the full system: a Clang-based exporter, structured TIR, ownership and memory-safety analysis, tiered translation, a verification ladder, a safety gate and incremental C-ABI migration.
 
 M1 translates scalars, control flow, structs by value, fixed arrays, string literals, enums and constants to safe Rust at T0, and verifies each corpus case against its C original. Heap ownership, macros, interop and the safety gate start at M2 and later milestones.
 
