@@ -6,9 +6,12 @@
 //! `continue`.
 //!
 //! Slice recognition is deliberately conservative: a pointer parameter is
-//! treated as a slice only when the next parameter is a `size_t`, and every use
-//! of the pointer must be an index and every use of the length must be a
-//! standalone local. Anything else is refused rather than translated unsafely.
+//! treated as a slice only when the pointer group is followed by a `size_t`,
+//! and every use of the pointer must be an index and every use of the length
+//! must be a standalone local. Anything else is refused rather than translated
+//! unsafely. The rule itself lives in [`recast_ir::slice`], so the signature,
+//! the driver's call sites and the tier rules cannot disagree about which
+//! parameters are one slice.
 
 pub mod rust;
 
@@ -17,8 +20,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use recast_ir::{
-    Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage, Program, RecordDef, Stmt,
-    StmtKind, Type, TypeId,
+    slice_group, Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage, Program,
+    RecordDef, Stmt, StmtKind, Type, TypeId,
 };
 use rust::{
     Expr as RExpr, File as RFile, Fn as RFn, Item as RItem, MatchArm, Pattern, Stmt as RStmt,
@@ -213,32 +216,21 @@ struct Translator<'a> {
 
 impl<'a> Translator<'a> {
     fn new(program: &'a Program, function: &'a Function) -> Result<Self, TranslateError> {
+        // The C idiom `(const T *a, const T *b, ..., size_t n)`: every pointer
+        // before a `size_t` shares that length. One rule, shared with the
+        // driver, so the signature and the call sites cannot disagree.
         let mut slices = Vec::new();
-        // Recognize the C idiom `(const T *a, const T *b, ..., size_t n)`:
-        // every pointer before a `size_t` shares that length.
-        if let Some(index) = function
-            .signature
-            .params
-            .iter()
-            .position(|param| is_size_t(program, param.ty))
-        {
-            let length_name = function.signature.params[index].name.clone();
-            let pointers_only = index > 0
-                && function.signature.params[..index]
-                    .iter()
-                    .all(|param| matches!(program.types.get(param.ty), Some(Type::Pointer { .. })));
-            if let Some(length_name) = length_name.filter(|_| pointers_only) {
-                for pointer in &function.signature.params[..index] {
-                    let Some(pointer_name) = &pointer.name else {
+        if let Some(group) = slice_group(program, &function.signature.params) {
+            if let Some(length_name) = function.signature.params[group.length].name.clone() {
+                for index in &group.pointers {
+                    let param = &function.signature.params[*index];
+                    let Some(pointer_name) = &param.name else {
                         continue;
                     };
-                    let Some(Type::Pointer { pointee, is_const }) = program.types.get(pointer.ty)
+                    let Some(Type::Pointer { pointee, is_const }) = program.types.get(param.ty)
                     else {
                         continue;
                     };
-                    if !is_slice_element(program, *pointee) {
-                        continue;
-                    }
                     slices.push(SlicePlan {
                         pointer: pointer_name.clone(),
                         length: length_name.clone(),
@@ -873,19 +865,16 @@ impl<'a> Translator<'a> {
             }),
             ExprKind::InitList(_) => self.aggregate(expr, expr.ty),
             ExprKind::Call { callee, args } => {
-                let (name, parameters) = match callee {
+                let (name, parameters, group) = match callee {
                     Callee::Direct(id) => {
                         let function = self.program.function(id).ok_or_else(|| {
                             self.error(format!("call target {id} does not exist"))
                         })?;
+                        let params = &function.signature.params;
                         (
                             function.name.clone(),
-                            function
-                                .signature
-                                .params
-                                .iter()
-                                .map(|param| param.ty)
-                                .collect::<Vec<_>>(),
+                            params.iter().map(|param| param.ty).collect::<Vec<_>>(),
+                            slice_group(self.program, params),
                         )
                     }
                     Callee::Indirect(_) => {
@@ -897,6 +886,11 @@ impl<'a> Translator<'a> {
                 };
                 let mut lowered = Vec::with_capacity(args.len());
                 for (index, arg) in args.iter().enumerate() {
+                    if group.as_ref().is_some_and(|group| group.length == index) {
+                        // The callee takes the slice itself; its length is the
+                        // slice's `len()` in Rust, not an argument.
+                        continue;
+                    }
                     let expected = parameters.get(index).copied().unwrap_or(arg.ty);
                     let value = self.value(arg, expected)?;
                     lowered.push(self.reborrow(value, expected));
@@ -1821,27 +1815,6 @@ fn is_unit(program: &Program, id: TypeId) -> bool {
 
 fn is_bool(program: &Program, id: TypeId) -> bool {
     matches!(program.types.canonical(id), Some(Type::Bool))
-}
-
-fn is_size_t(program: &Program, id: TypeId) -> bool {
-    match program.types.get(id) {
-        Some(Type::Named { name, .. }) if name == "size_t" => true,
-        Some(ty) => matches!(
-            ty,
-            Type::Int { bits, signed: false, .. } if u16::from(*bits) == u16::from(program.target.size_t_bits)
-        ),
-        None => false,
-    }
-}
-
-fn is_slice_element(program: &Program, id: TypeId) -> bool {
-    matches!(
-        program.types.get(id),
-        Some(Type::Bool)
-            | Some(Type::Char { .. })
-            | Some(Type::Int { .. })
-            | Some(Type::Float { .. })
-    )
 }
 
 fn is_unsigned(program: &Program, id: TypeId) -> bool {

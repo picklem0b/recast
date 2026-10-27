@@ -7,6 +7,7 @@
 pub mod dump;
 pub mod id;
 pub mod program;
+pub mod slice;
 pub mod types;
 pub mod validate;
 
@@ -17,5 +18,6 @@ pub use program::{
     Function, Global, Linkage, Param, Program, Provenance, RecordDef, Span, Stmt, StmtKind, Target,
     ValueCategory, SCHEMA_NAME, SCHEMA_VERSION,
 };
+pub use slice::{is_size_t, is_slice_element, slice_group, SliceGroup};
 pub use types::{Type, TypeTable};
 pub use validate::{validate, ValidationError};

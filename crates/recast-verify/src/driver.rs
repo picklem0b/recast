@@ -175,7 +175,7 @@ pub(crate) fn arguments(
     values: &[Value],
 ) -> Result<Arguments, Error> {
     let params = &function.signature.params;
-    let length_index = slice_length_index(program, function);
+    let group = recast_ir::slice::slice_group(program, params);
     let mut arguments = Arguments {
         c_args: Vec::new(),
         r_args: Vec::new(),
@@ -188,7 +188,7 @@ pub(crate) fn arguments(
     let mut slice_len: Option<usize> = None;
 
     for (index, param) in params.iter().enumerate() {
-        if Some(index) == length_index {
+        if group.as_ref().is_some_and(|group| group.length == index) {
             // The C parameter list keeps the length in its own position, so
             // the derived value goes here, not at the end of the call.
             let len = slice_len.ok_or_else(|| {
@@ -207,7 +207,10 @@ pub(crate) fn arguments(
             ))
         })?;
         used += 1;
-        if length_index.is_some_and(|length| index < length) {
+        if group
+            .as_ref()
+            .is_some_and(|group| group.contains_pointer(index))
+        {
             let (c, rust, len) = slice_argument(program, param.ty, value)?;
             if let Some(existing) = slice_len {
                 if existing != len {
@@ -310,36 +313,6 @@ fn rust_scalar(program: &Program, id: TypeId) -> Option<String> {
             .enum_named(name)
             .and_then(|item| rust_scalar(program, item.underlying)),
         _ => None,
-    }
-}
-
-fn slice_length_index(program: &Program, function: &Function) -> Option<usize> {
-    let params = &function.signature.params;
-    let index = params
-        .iter()
-        .position(|param| is_size_t(program, param.ty))?;
-    if index == 0 {
-        return None;
-    }
-    if params[..index]
-        .iter()
-        .all(|param| matches!(program.types.get(param.ty), Some(Type::Pointer { .. })))
-    {
-        Some(index)
-    } else {
-        None
-    }
-}
-
-fn is_size_t(program: &Program, id: TypeId) -> bool {
-    match program.types.get(id) {
-        Some(Type::Named { name, .. }) if name == "size_t" => true,
-        Some(Type::Int {
-            bits,
-            signed: false,
-            ..
-        }) => u16::from(*bits) == u16::from(program.target.size_t_bits),
-        _ => false,
     }
 }
 
