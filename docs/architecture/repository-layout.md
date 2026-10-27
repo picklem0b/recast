@@ -46,12 +46,15 @@ recast/
     fast.sh                     # no-Clang build, determinism and generated-crate check
     m0-exit.sh                  # M0 exit criteria through the real exporter
     m1-exit.sh                  # M1 corpus, property and mutation criteria
+    m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
+    m2-refusals.sh              # the constructs outside the current M2 step are refused
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
     golden/                     # expected translation output per case
   corpus/
     l0/                         # committed L0 teaching programs and case descriptions
+    m2/                         # committed M2 programs, one directory per build point
   models/                       # library models (populated from M2)
   benchmarks/                   # benchmark protocol and manifests
   docs/
@@ -171,7 +174,7 @@ The repository is Apache-2.0. Do not add per-file license headers unless a depen
 
 ### Versions and tags
 
-`spec-v1.0.x` tags the specification set. `v1.0.x` tags implementation states. Tags are annotated and their messages start with the tag name. A tag is created only after its exit criteria pass.
+`spec-v1.0.x` tags the specification set. `v1.0.x` tags implementation states. Tags are annotated and their messages start with the tag name. A tag is created only after its exit criteria pass, and it publishes exactly one commit — a build point, a repair or a document state. Nothing is batched into a tag: a step that is worth a commit is worth its own tag.
 
 ### Commits
 
@@ -206,3 +209,9 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.26`            | M1 repair: typedef initializers.                                         |
 | `v1.1.27`            | M1 repair: typedef spellings in the V2 driver.                           |
 | `v1.1.28`            | M1 repair: style of the repair set.                                      |
+| `v1.2.0`             | M2 opens: the workspace version is 1.2.0.                                |
+| `v1.2.1`             | M2: a pointer to one object is a reference.                              |
+| `v1.2.2`             | M2: the V2 driver owns and observes a pointer argument.                  |
+| `v1.2.3`             | M2: the pointer corpus and `ci/m2-corpus.sh`.                            |
+| `v1.2.4`             | M2: `ci/m2-refusals.sh` checks the refusal list.                         |
+| `v1.2.5`             | M2: the audit records the pointer step.                                  |
