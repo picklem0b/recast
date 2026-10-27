@@ -143,6 +143,9 @@ impl Expr {
             }
             Expr::Unary { op, expr } => {
                 out.push_str(op);
+                if *op == "&mut" {
+                    out.push(' ');
+                }
                 out.push_str(&expr.wrapped(11));
             }
             Expr::Binary { op, lhs, rhs } => {
