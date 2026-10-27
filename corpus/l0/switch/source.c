@@ -69,3 +69,42 @@ int classify_unsigned(unsigned int key) {
             return 0;
     }
 }
+
+/* Arms with several statements: clang leaves the ones after the first as
+   siblings of the label, and dropping them changed the result silently. */
+int weighted(int key, int value) {
+    int total = 0;
+    switch (key) {
+        case 0:
+            total += value;
+            total *= 3;
+            break;
+        case 1:
+            total -= value;
+            if (total < 0) {
+                total += 10;
+            }
+            break;
+        default:
+            total = value + 1;
+            total ^= 5;
+    }
+    return total;
+}
+
+/* A trailing compound statement in the arm, and a `default` that is last with
+   several statements and no `break`. */
+int scaled(int key, int value) {
+    int total = 1;
+    switch (key) {
+        case 2: {
+            int scaled = value * 2;
+            total = scaled + 1;
+            break;
+        }
+        default:
+            total = value;
+            total -= 7;
+    }
+    return total;
+}

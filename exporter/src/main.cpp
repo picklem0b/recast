@@ -260,7 +260,7 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
 
     Array cases;
     std::optional<size_t> current;
-    bool nested_label = false;
+    bool unattributed = false;
 
     auto begin_case = [&](std::optional<int64_t> value) {
       Object entry;
@@ -277,7 +277,9 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
 
     // A switch body is a list of statements where each case owns the
     // statements that follow it. Nested `case` labels (empty fallthrough) are
-    // separate arms with empty bodies.
+    // separate arms with empty bodies. clang keeps only the first statement of
+    // an arm under the label and leaves the rest as siblings of it, so a
+    // statement belongs to an arm when a label precedes it in the body.
     std::function<void(const clang::Stmt *, bool)> append = [&](const clang::Stmt *child,
                                                                bool inside_case) {
       if (child == nullptr) {
@@ -297,12 +299,15 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
       }
       if (auto *compound = clang::dyn_cast<clang::CompoundStmt>(child)) {
         for (const clang::Stmt *inner : compound->body()) {
-          append(inner, inside_case);
+          append(inner, inside_case || current.has_value());
         }
         return;
       }
       if (!inside_case || !current.has_value()) {
-        nested_label = true;
+        // A statement before the first label, or one the arms do not own.
+        // Translating the surrounding arms would silently drop it, and
+        // document 06 section 10.2 flags such a switch.
+        unattributed = true;
         return;
       }
       if (auto *array = cases[*current].getAsObject()->getArray("stmts")) {
@@ -311,9 +316,15 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
     };
 
     append(switch_stmt->getBody(), false);
-    (void)nested_label;
+    if (unattributed) {
+      Object unsupported;
+      unsupported["kind"] = "unsupported";
+      unsupported["spelling"] = "switch with a statement outside every case";
+      unsupported["span"] = span_json(switch_stmt->getBeginLoc(), context);
+      return unsupported;
+    }
 
-    // A case falls through when its last statement cannot transfer control.
+    // A case falls through when its last statement can reach the next case.
     for (size_t index = 0; index + 1 < cases.size(); ++index) {
       auto *entry = cases[index].getAsObject();
       auto *stmts = entry->getArray("stmts");
