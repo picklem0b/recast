@@ -299,6 +299,32 @@ fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(Strin
                 format!("generated::{name} {{ {} }}", r_fields.join(", ")),
             ))
         }
+        Some(Type::Array { elem, len }) => {
+            let items = value
+                .as_array()
+                .ok_or_else(|| Error::Case(format!("expected an array, found {value}")))?;
+            let expected = usize::try_from(*len).unwrap_or(usize::MAX);
+            if items.len() != expected {
+                return Err(Error::Case(format!(
+                    "expected {expected} element(s), found {}",
+                    items.len()
+                )));
+            }
+            let mut c_values = Vec::with_capacity(items.len());
+            let mut r_values = Vec::with_capacity(items.len());
+            for item in items {
+                let (c, rust) = value_argument(program, *elem, item)?;
+                c_values.push(c);
+                r_values.push(rust);
+            }
+            // An array member takes a braced initializer, not a compound
+            // literal: `(struct w){{1, 2, 3}, 4}`. M1 has no array parameter
+            // that would need the expression form.
+            Ok((
+                format!("{{{}}}", c_values.join(", ")),
+                format!("[{}]", r_values.join(", ")),
+            ))
+        }
         Some(Type::Named { canonical, .. }) => value_argument(program, *canonical, value),
         other => Err(Error::Unsupported(format!(
             "cannot pass a value of type {other:?}"
@@ -528,6 +554,23 @@ mod tests {
             pointee: character,
             is_const: true,
         })
+    }
+
+    #[test]
+    fn array_arguments_are_built_from_their_elements() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let array = program.types.intern(Type::Array { elem: int, len: 3 });
+        let (c, rust) = value_argument(&program, array, &serde_json::json!([1, 2, 3]))
+            .expect("array argument");
+        assert_eq!(c, "{1, 2, 3}");
+        assert_eq!(rust, "[1, 2, 3]");
+        let wrong = value_argument(&program, array, &serde_json::json!([1, 2]));
+        assert!(wrong.is_err(), "an argument must match the declared length");
     }
 
     #[test]
