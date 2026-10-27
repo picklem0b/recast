@@ -10,7 +10,12 @@ use std::fmt::Write;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Path(String),
-    Int(i64),
+    /// An integer literal. `suffix` names the Rust type when Rust could not
+    /// infer the value's C type, as in `31u32` or `18446744073709551615u64`.
+    Int {
+        value: i64,
+        suffix: Option<String>,
+    },
     Float(f64),
     Bool(bool),
     /// A UTF-8 string literal, used for panic messages.
@@ -90,9 +95,19 @@ impl Expr {
     fn render(&self, out: &mut String) {
         match self {
             Expr::Path(path) => out.push_str(path),
-            Expr::Int(value) => {
-                let _ = write!(out, "{value}");
-            }
+            Expr::Int { value, suffix } => match suffix {
+                // An unsigned type has no negative literals, so a value stored
+                // as a bit pattern prints as the number those bits stand for.
+                Some(suffix) if suffix.starts_with('u') && *value < 0 => {
+                    let _ = write!(out, "{}{suffix}", unsigned_value(*value, suffix));
+                }
+                Some(suffix) => {
+                    let _ = write!(out, "{value}{suffix}");
+                }
+                None => {
+                    let _ = write!(out, "{value}");
+                }
+            },
             Expr::Float(value) => {
                 let _ = write!(out, "{value:?}");
             }
@@ -218,6 +233,22 @@ impl Expr {
         }
     }
 
+    /// An integer literal in Rust's default type, `i32`.
+    pub fn int(value: i64) -> Self {
+        Self::Int {
+            value,
+            suffix: None,
+        }
+    }
+
+    /// An integer literal spelled with its Rust type, e.g. `31u32`.
+    pub fn typed_int(value: i64, suffix: impl Into<String>) -> Self {
+        Self::Int {
+            value,
+            suffix: Some(suffix.into()),
+        }
+    }
+
     fn wrapped(&self, minimum: u8) -> String {
         let rendered = self.render_to_string();
         if self.precedence() < minimum {
@@ -231,6 +262,17 @@ impl Expr {
         let mut out = String::new();
         self.render(&mut out);
         out
+    }
+}
+
+/// The number an unsigned literal's bits stand for, so a value stored as a
+/// signed bit pattern prints at its own width.
+fn unsigned_value(value: i64, suffix: &str) -> u64 {
+    match suffix {
+        "u8" => u64::from(value as u8),
+        "u16" => u64::from(value as u16),
+        "u32" => u64::from(value as u32),
+        _ => value as u64,
     }
 }
 
@@ -564,7 +606,7 @@ mod tests {
                 lhs: Box::new(Expr::Path("a".into())),
                 rhs: Box::new(Expr::Path("b".into())),
             }),
-            rhs: Box::new(Expr::Int(2)),
+            rhs: Box::new(Expr::int(2)),
         };
         assert_eq!(expr.render_to_string(), "(a + b) * 2");
     }
@@ -575,7 +617,7 @@ mod tests {
             receiver: Box::new(Expr::Method {
                 receiver: Box::new(Expr::Path("a".into())),
                 method: "wrapping_mul".into(),
-                args: vec![Expr::Int(31)],
+                args: vec![Expr::int(31)],
             }),
             method: "wrapping_add".into(),
             args: vec![Expr::Path("b".into())],
@@ -590,7 +632,7 @@ mod tests {
     fn struct_literals_and_fields_render() {
         let value = Expr::StructLit {
             path: "Point".into(),
-            fields: vec![("x".into(), Expr::Int(1)), ("y".into(), Expr::Int(2))],
+            fields: vec![("x".into(), Expr::int(1)), ("y".into(), Expr::int(2))],
         };
         assert_eq!(value.render_to_string(), "Point { x: 1, y: 2 }");
         let field = Expr::Field {
@@ -604,5 +646,23 @@ mod tests {
     fn byte_strings_escape() {
         let value = Expr::Bytes(b"a\"\n".to_vec());
         assert_eq!(value.render_to_string(), "b\"a\\\"\\n\"");
+    }
+
+    #[test]
+    fn a_typed_literal_renders_its_suffix() {
+        assert_eq!(Expr::typed_int(31, "u32").render_to_string(), "31u32");
+        assert_eq!(
+            Expr::typed_int(3000000000, "i64").render_to_string(),
+            "3000000000i64"
+        );
+        // An unsigned type has no negative literals: the stored bits print as
+        // the value they stand for, at the width of their own suffix.
+        assert_eq!(Expr::typed_int(-1, "u8").render_to_string(), "255u8");
+        assert_eq!(Expr::typed_int(-1, "u32").render_to_string(), "4294967295u32");
+        assert_eq!(
+            Expr::typed_int(-1, "u64").render_to_string(),
+            "18446744073709551615u64"
+        );
+        assert_eq!(Expr::int(7).render_to_string(), "7");
     }
 }

@@ -19,3 +19,29 @@ int loop_to_limit(void) {
     }
     return total;
 }
+
+/* Literals whose C type Rust cannot infer from the surrounding expression: a
+   value above `i32`, and the most negative `int`, whose literal is a positive
+   `long` that is then negated. */
+long wide(void) {
+    return 3000000000L;
+}
+
+int below_int_min(void) {
+    return -2147483648;
+}
+
+/* An unsigned value whose high bit is set: the exported literal is negative
+   before it is spelled at its own width. */
+unsigned int high_bit(void) {
+    return 0x80000000u;
+}
+
+/* Radix and character literals keep their values. */
+int radix(void) {
+    return 0x1F + 010 + 5;
+}
+
+int chars(void) {
+    return 'A' + '\n' + '0';
+}

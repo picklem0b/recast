@@ -40,6 +40,26 @@
       "args": [
         0
       ]
+    },
+    {
+      "function": "wide",
+      "args": []
+    },
+    {
+      "function": "below_int_min",
+      "args": []
+    },
+    {
+      "function": "high_bit",
+      "args": []
+    },
+    {
+      "function": "radix",
+      "args": []
+    },
+    {
+      "function": "chars",
+      "args": []
     }
   ]
 }

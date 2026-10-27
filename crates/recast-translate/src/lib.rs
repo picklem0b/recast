@@ -648,14 +648,14 @@ impl<'a> Translator<'a> {
                         value: RExpr::Method {
                             receiver: Box::new(target),
                             method: step.to_string(),
-                            args: vec![RExpr::Int(1)],
+                            args: vec![RExpr::int(1)],
                         },
                     })
                 } else {
                     Ok(RStmt::Assign {
                         target,
                         op: if op == "++" { "+=" } else { "-=" },
-                        value: RExpr::Int(1),
+                        value: RExpr::int(1),
                     })
                 }
             }
@@ -709,10 +709,10 @@ impl<'a> Translator<'a> {
 
     fn expr(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
         match &expr.kind {
-            ExprKind::IntLit(value) => Ok(RExpr::Int(*value)),
+            ExprKind::IntLit(value) => Ok(self.int_literal(*value, expr.ty)),
             ExprKind::FloatLit(value) => Ok(RExpr::Float(*value)),
             ExprKind::BoolLit(value) => Ok(RExpr::Bool(*value)),
-            ExprKind::CharLit(value) => Ok(RExpr::Int(i64::from(*value))),
+            ExprKind::CharLit(value) => Ok(self.int_literal(i64::from(*value), expr.ty)),
             ExprKind::StringLit(value) => Ok(RExpr::Bytes(value.clone().into_bytes())),
             ExprKind::Local(name) => {
                 if let Some(plan) = self.slice_by_length(name) {
@@ -740,20 +740,23 @@ impl<'a> Translator<'a> {
                 }
                 Ok(RExpr::Path(global.name.clone()))
             }
-            ExprKind::EnumConst { value, .. } => Ok(RExpr::Int(*value)),
+            ExprKind::EnumConst { value, .. } => Ok(self.int_literal(*value, expr.ty)),
             ExprKind::Unary { op, operand, .. } => match op.as_str() {
                 "-" if is_unsigned(self.program, operand.ty) => Ok(RExpr::Method {
-                    receiver: Box::new(self.value(operand, operand.ty)?),
+                    receiver: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                     method: "wrapping_neg".to_string(),
                     args: Vec::new(),
                 }),
+                // A negated literal keeps its own type: without it, a cast of
+                // the result would infer the target into the literal and reject
+                // the negation (`(-1) as u32` is an error, `-1i32 as u32` is not).
                 "-" => Ok(RExpr::Unary {
                     op: "-",
-                    expr: Box::new(self.value(operand, operand.ty)?),
+                    expr: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                 }),
                 "~" => Ok(RExpr::Unary {
                     op: "!",
-                    expr: Box::new(self.value(operand, operand.ty)?),
+                    expr: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                 }),
                 "+" => self.value(operand, operand.ty),
                 "!" => Ok(RExpr::Unary {
@@ -912,7 +915,7 @@ impl<'a> Translator<'a> {
                         _ => "wrapping_mul",
                     };
                     return Ok(RExpr::Method {
-                        receiver: Box::new(lhs_expr),
+                        receiver: Box::new(self.typed(lhs_expr, lhs.ty)),
                         method: method.to_string(),
                         args: vec![rhs_expr],
                     });
@@ -955,7 +958,7 @@ impl<'a> Translator<'a> {
             "checked_shr"
         };
         let checked = RExpr::Method {
-            receiver: Box::new(lhs_expr),
+            receiver: Box::new(self.typed(lhs_expr, lhs.ty)),
             method: method.to_string(),
             args: vec![RExpr::Cast {
                 expr: Box::new(rhs_expr),
@@ -998,7 +1001,7 @@ impl<'a> Translator<'a> {
             _ => Ok(RExpr::Binary {
                 op: "!=",
                 lhs: Box::new(self.expr(expr)?),
-                rhs: Box::new(RExpr::Int(0)),
+                rhs: Box::new(RExpr::int(0)),
             }),
         }
     }
@@ -1038,6 +1041,30 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// An integer literal, spelled with its Rust type when Rust could not infer
+    /// the C type from context: a value outside `i32` (Rust's default) would
+    /// either not compile or change value.
+    fn int_literal(&self, value: i64, ty: TypeId) -> RExpr {
+        let out_of_range = value > i64::from(i32::MAX) || value < i64::from(i32::MIN);
+        // An unsigned value stored as a negative bit pattern (a 64-bit constant
+        // above `i64::MAX`) needs its type as well, so it prints unsigned.
+        let negative_unsigned = value < 0 && is_unsigned(self.program, ty);
+        match self.rust_type(ty) {
+            Ok(rust) if out_of_range || negative_unsigned => RExpr::typed_int(value, rust),
+            _ => RExpr::int(value),
+        }
+    }
+
+    /// An expression that Rust cannot type on its own: the receiver of a
+    /// method call (E0689) or the operand of a unary operator, where the
+    /// surrounding type would otherwise be inferred into the literal.
+    fn typed(&self, expr: RExpr, ty: TypeId) -> RExpr {
+        match (expr, self.rust_type(ty)) {
+            (RExpr::Int { value, suffix: None }, Ok(rust)) => RExpr::typed_int(value, rust),
+            (expr, _) => expr,
+        }
+    }
+
     fn cast(&self, to: TypeId, expr: &Expr) -> Result<RExpr, TranslateError> {
         if is_bool(self.program, to) {
             return self.condition(expr);
@@ -1055,7 +1082,7 @@ impl<'a> Translator<'a> {
         if let ExprKind::IntLit(value) = &expr.kind {
             // Rust infers the target width from the binding or parameter, and
             // an unsuffixed literal keeps the output free of redundant casts.
-            return Ok(RExpr::Int(*value));
+            return Ok(RExpr::int(*value));
         }
         if matches!(
             self.program.types.get(to),
@@ -1172,7 +1199,7 @@ fn zero_value(program: &Program, id: TypeId) -> Result<RExpr, String> {
     match program.types.get(id) {
         Some(Type::Bool) => Ok(RExpr::Bool(false)),
         Some(Type::Char { .. }) | Some(Type::Int { .. }) | Some(Type::Enum { .. }) => {
-            Ok(RExpr::Int(0))
+            Ok(RExpr::int(0))
         }
         Some(Type::Float { .. }) => Ok(RExpr::Float(0.0)),
         Some(Type::Array { elem, len }) => Ok(RExpr::Repeat {
