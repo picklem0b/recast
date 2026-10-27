@@ -192,3 +192,17 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.12`            | M1 references point at the page tags.                                    |
 | `v1.1.13`            | M1 audit repairs.                                                        |
 | `v1.1.14`            | M1 repair note: the signed-`char` check.                                 |
+| `v1.1.15`            | M1 repair: literal typing.                                               |
+| `v1.1.16`            | M1 repair: a constant cast folds.                                        |
+| `v1.1.17`            | M1 repair: a void cast discards.                                         |
+| `v1.1.18`            | M1 repair: a cast before a comparison.                                   |
+| `v1.1.19`            | M1 repair: unsigned constants.                                           |
+| `v1.1.20`            | M1 repair: every statement of a switch arm.                              |
+| `v1.1.21`            | M1 repair: `continue` leaves the switch.                                 |
+| `v1.1.22`            | M1 repair: typedef record names.                                         |
+| `v1.1.23`            | M1 repair: array arguments in the V2 driver.                             |
+| `v1.1.24`            | M1 repair: index bases.                                                  |
+| `v1.1.25`            | M1 repair: compound shifts.                                              |
+| `v1.1.26`            | M1 repair: typedef initializers.                                         |
+| `v1.1.27`            | M1 repair: typedef spellings in the V2 driver.                           |
+| `v1.1.28`            | M1 repair: style of the repair set.                                      |
