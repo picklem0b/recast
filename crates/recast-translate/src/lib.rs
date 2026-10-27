@@ -798,10 +798,23 @@ impl<'a> Translator<'a> {
                 "+" => self.value(operand, operand.ty),
                 // A pointer to one object is a reference, so a dereference is
                 // a dereference and an address-of is a borrow.
-                "*" => Ok(RExpr::Unary {
-                    op: "*",
-                    expr: Box::new(self.value(operand, operand.ty)?),
-                }),
+                "*" => {
+                    // A slice parameter is `&[T]`: `*p` would be an unsized
+                    // place. The C that says `*p` treats `p` as one object, so
+                    // the two readings disagree and the extent facts have to
+                    // decide.
+                    if let ExprKind::Local(name) = &unwrap_casts(operand).kind {
+                        if self.slice_by_pointer(name).is_some() {
+                            return Err(self.error(format!(
+                                "{name} is a slice parameter, so `*{name}` reads it as one object; the M2 extent facts are needed"
+                            )));
+                        }
+                    }
+                    Ok(RExpr::Unary {
+                        op: "*",
+                        expr: Box::new(self.value(operand, operand.ty)?),
+                    })
+                }
                 "&" => {
                     let mutable = matches!(
                         self.program.types.canonical(expr.ty),
