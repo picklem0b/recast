@@ -1,0 +1,105 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "bump",
+      "args": [
+        7
+      ]
+    },
+    {
+      "function": "bump",
+      "args": [
+        -1
+      ]
+    },
+    {
+      "function": "add_one",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "add_one",
+      "args": [
+        -5
+      ]
+    },
+    {
+      "function": "read",
+      "args": [
+        42
+      ]
+    },
+    {
+      "function": "read",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "add_to",
+      "args": [
+        10,
+        4
+      ]
+    },
+    {
+      "function": "add_to",
+      "args": [
+        10,
+        -4
+      ]
+    },
+    {
+      "function": "set_high",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "set_high",
+      "args": [
+        255
+      ]
+    },
+    {
+      "function": "sum_with",
+      "args": [
+        3,
+        4
+      ]
+    },
+    {
+      "function": "sum_with",
+      "args": [
+        -3,
+        -4
+      ]
+    },
+    {
+      "function": "twice_through",
+      "args": [
+        5
+      ]
+    },
+    {
+      "function": "twice_through",
+      "args": [
+        -2
+      ]
+    },
+    {
+      "function": "total",
+      "args": [
+        6
+      ]
+    },
+    {
+      "function": "total",
+      "args": [
+        0
+      ]
+    }
+  ]
+}
