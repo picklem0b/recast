@@ -1,0 +1,45 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "narrow_unsigned_char",
+      "args": []
+    },
+    {
+      "function": "narrow_char",
+      "args": []
+    },
+    {
+      "function": "narrow_short",
+      "args": []
+    },
+    {
+      "function": "negated",
+      "args": []
+    },
+    {
+      "function": "widened",
+      "args": [
+        7
+      ]
+    },
+    {
+      "function": "widened",
+      "args": [
+        -7
+      ]
+    },
+    {
+      "function": "unsigned_of_int",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "unsigned_of_int",
+      "args": [
+        -1
+      ]
+    }
+  ]
+}

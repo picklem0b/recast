@@ -1080,9 +1080,14 @@ impl<'a> Translator<'a> {
             return self.expr(expr);
         }
         if let ExprKind::IntLit(value) = &expr.kind {
-            // Rust infers the target width from the binding or parameter, and
-            // an unsuffixed literal keeps the output free of redundant casts.
-            return Ok(RExpr::int(*value));
+            // A cast of a constant is a constant: fold it, so a narrowing cast
+            // truncates the value instead of leaving Rust to infer a width
+            // (`(unsigned char)300` is 44, not 300).
+            let bits = self.int_width(to)?;
+            return Ok(self.int_literal(
+                fold_integer_cast(*value, bits, !is_unsigned(self.program, to)),
+                to,
+            ));
         }
         if matches!(
             self.program.types.get(to),
@@ -1157,6 +1162,25 @@ impl<'a> Translator<'a> {
 
     fn error(&self, message: impl Into<String>) -> TranslateError {
         TranslateError::new(self.function, message)
+    }
+}
+
+/// The C value of a constant after a cast to `bits`-wide `signed`, which is
+/// what a cast of a literal folds to.
+fn fold_integer_cast(value: i64, bits: u64, signed: bool) -> i64 {
+    let bits = bits.min(64) as u32;
+    if bits == 0 {
+        return value;
+    }
+    if bits == 64 {
+        return value;
+    }
+    let mask = (1u64 << bits) - 1;
+    let raw = (value as u64) & mask;
+    if signed && raw >> (bits - 1) == 1 {
+        (raw | !mask) as i64
+    } else {
+        raw as i64
     }
 }
 
