@@ -1077,7 +1077,13 @@ impl<'a> Translator<'a> {
     /// surrounding type would otherwise be inferred into the literal.
     fn typed(&self, expr: RExpr, ty: TypeId) -> RExpr {
         match (expr, self.rust_type(ty)) {
-            (RExpr::Int { value, suffix: None }, Ok(rust)) => RExpr::typed_int(value, rust),
+            (
+                RExpr::Int {
+                    value,
+                    suffix: None,
+                },
+                Ok(rust),
+            ) => RExpr::typed_int(value, rust),
             (expr, _) => expr,
         }
     }
@@ -1124,11 +1130,8 @@ impl<'a> Translator<'a> {
     /// of arrays, which is itself an array in place.
     fn index_base(&self, base: &Expr) -> Result<RExpr, TranslateError> {
         let mut current = base;
-        loop {
-            match &current.kind {
-                ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => current = inner,
-                _ => break,
-            }
+        while let ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } = &current.kind {
+            current = inner;
         }
         match &current.kind {
             ExprKind::Local(name) => {

@@ -695,7 +695,10 @@ mod tests {
         // An unsigned type has no negative literals: the stored bits print as
         // the value they stand for, at the width of their own suffix.
         assert_eq!(Expr::typed_int(-1, "u8").render_to_string(), "255u8");
-        assert_eq!(Expr::typed_int(-1, "u32").render_to_string(), "4294967295u32");
+        assert_eq!(
+            Expr::typed_int(-1, "u32").render_to_string(),
+            "4294967295u32"
+        );
         assert_eq!(
             Expr::typed_int(-1, "u64").render_to_string(),
             "18446744073709551615u64"

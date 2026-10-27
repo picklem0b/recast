@@ -568,8 +568,8 @@ mod tests {
             spelling: "int".to_string(),
         });
         let array = program.types.intern(Type::Array { elem: int, len: 3 });
-        let (c, rust) = value_argument(&program, array, &serde_json::json!([1, 2, 3]))
-            .expect("array argument");
+        let (c, rust) =
+            value_argument(&program, array, &serde_json::json!([1, 2, 3])).expect("array argument");
         assert_eq!(c, "{1, 2, 3}");
         assert_eq!(rust, "[1, 2, 3]");
         let wrong = value_argument(&program, array, &serde_json::json!([1, 2]));
