@@ -670,6 +670,16 @@ impl<'a> Translator<'a> {
     }
 
     fn assign_statement(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Result<RStmt, TranslateError> {
+        if op == "<<=" || op == ">>=" {
+            // The same shift the binary form lowers, so an out-of-range count
+            // keeps its UB-007 panic instead of wrapping silently.
+            let shift = self.shift(if op == "<<=" { "<<" } else { ">>" }, lhs, rhs)?;
+            return Ok(RStmt::Assign {
+                target: self.expr(lhs)?,
+                op: "=",
+                value: shift,
+            });
+        }
         let op = match op {
             "=" => "=",
             "+=" => "+=",

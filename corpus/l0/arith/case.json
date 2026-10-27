@@ -116,6 +116,48 @@
         -8,
         -2
       ]
+    },
+    {
+      "function": "shift_assign",
+      "args": [
+        5,
+        1
+      ]
+    },
+    {
+      "function": "shift_assign",
+      "args": [
+        -8,
+        2
+      ]
+    },
+    {
+      "function": "shift_assign",
+      "args": [
+        0,
+        0
+      ]
+    },
+    {
+      "function": "shift_assign",
+      "args": [
+        1,
+        0
+      ]
+    },
+    {
+      "function": "shift_assign_unsigned",
+      "args": [
+        1,
+        0
+      ]
+    },
+    {
+      "function": "shift_assign_unsigned",
+      "args": [
+        7,
+        0
+      ]
     }
   ],
   "sweeps": [
