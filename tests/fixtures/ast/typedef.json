@@ -14,6 +14,170 @@
       "file": "tests/fixtures/typedef.c",
       "functions": [
         {
+          "name": "make",
+          "linkage": "external",
+          "return_type": {
+            "kind": "named",
+            "name": "Pair",
+            "canonical": {
+              "kind": "record",
+              "name": "Pair"
+            }
+          },
+          "params": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "int",
+                "bits": 32,
+                "signed": true,
+                "spelling": "int"
+              }
+            },
+            {
+              "name": "b",
+              "type": {
+                "kind": "int",
+                "bits": 32,
+                "signed": true,
+                "spelling": "int"
+              }
+            }
+          ],
+          "body": {
+            "kind": "compound",
+            "stmts": [
+              {
+                "kind": "decl",
+                "name": "p",
+                "type": {
+                  "kind": "named",
+                  "name": "Pair",
+                  "canonical": {
+                    "kind": "record",
+                    "name": "Pair"
+                  }
+                },
+                "init": {
+                  "type": {
+                    "kind": "named",
+                    "name": "Pair",
+                    "canonical": {
+                      "kind": "record",
+                      "name": "Pair"
+                    }
+                  },
+                  "kind": "init_list",
+                  "elems": [
+                    {
+                      "type": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "kind": "cast",
+                      "to": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "expr": {
+                        "type": {
+                          "kind": "int",
+                          "bits": 32,
+                          "signed": true,
+                          "spelling": "int"
+                        },
+                        "kind": "decl_ref",
+                        "name": "a"
+                      },
+                      "implicit": true
+                    },
+                    {
+                      "type": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "kind": "cast",
+                      "to": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "expr": {
+                        "type": {
+                          "kind": "int",
+                          "bits": 32,
+                          "signed": true,
+                          "spelling": "int"
+                        },
+                        "kind": "decl_ref",
+                        "name": "b"
+                      },
+                      "implicit": true
+                    }
+                  ]
+                },
+                "span": {
+                  "file": "/root/recast/tests/fixtures/typedef.c",
+                  "line": 7,
+                  "column": 10
+                }
+              },
+              {
+                "kind": "return",
+                "value": {
+                  "type": {
+                    "kind": "named",
+                    "name": "Pair",
+                    "canonical": {
+                      "kind": "record",
+                      "name": "Pair"
+                    }
+                  },
+                  "kind": "cast",
+                  "to": {
+                    "kind": "named",
+                    "name": "Pair",
+                    "canonical": {
+                      "kind": "record",
+                      "name": "Pair"
+                    }
+                  },
+                  "expr": {
+                    "type": {
+                      "kind": "named",
+                      "name": "Pair",
+                      "canonical": {
+                        "kind": "record",
+                        "name": "Pair"
+                      }
+                    },
+                    "kind": "decl_ref",
+                    "name": "p"
+                  },
+                  "implicit": true
+                },
+                "span": {
+                  "file": "/root/recast/tests/fixtures/typedef.c",
+                  "line": 8,
+                  "column": 5
+                }
+              }
+            ]
+          },
+          "span": {
+            "file": "tests/fixtures/typedef.c",
+            "line": 6,
+            "column": 6
+          }
+        },
+        {
           "name": "sum",
           "linkage": "external",
           "return_type": {
@@ -130,7 +294,7 @@
                 },
                 "span": {
                   "file": "/root/recast/tests/fixtures/typedef.c",
-                  "line": 7,
+                  "line": 12,
                   "column": 5
                 }
               }
@@ -138,7 +302,7 @@
           },
           "span": {
             "file": "tests/fixtures/typedef.c",
-            "line": 6,
+            "line": 11,
             "column": 5
           }
         }

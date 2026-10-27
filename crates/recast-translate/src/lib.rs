@@ -609,7 +609,7 @@ impl<'a> Translator<'a> {
         let rust_ty = self.rust_type(ty)?;
         let init = match init {
             Some(init) => Some(self.value(init, ty)?),
-            None => match self.program.types.get(ty) {
+            None => match self.program.types.canonical(ty) {
                 Some(Type::Array { .. }) | Some(Type::Record { .. }) => {
                     // C leaves these indeterminate. Zeroing keeps the generated
                     // Rust total; definite-assignment analysis reports reads
@@ -872,7 +872,8 @@ impl<'a> Translator<'a> {
         let ExprKind::InitList(elems) = &expr.kind else {
             return Err(self.error("expected an initializer list"));
         };
-        match self.program.types.get(ty) {
+        // A typedef of a record or array initializes like the type it names.
+        match self.program.types.canonical(ty) {
             Some(Type::Record { name }) => {
                 let record = self
                     .program
@@ -1270,7 +1271,7 @@ fn type_name(program: &Program, id: TypeId) -> Result<String, String> {
 }
 
 fn zero_value(program: &Program, id: TypeId) -> Result<RExpr, String> {
-    match program.types.get(id) {
+    match program.types.canonical(id) {
         Some(Type::Bool) => Ok(RExpr::Bool(false)),
         Some(Type::Char { .. }) | Some(Type::Int { .. }) | Some(Type::Enum { .. }) => {
             Ok(RExpr::int(0))

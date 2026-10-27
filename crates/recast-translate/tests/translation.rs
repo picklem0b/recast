@@ -107,6 +107,10 @@ fn an_anonymous_typedef_record_keeps_its_name() {
         generated.contains("pub fn sum(p: Pair) -> i32"),
         "{generated}"
     );
+    assert!(
+        generated.contains("pub fn make(a: i32, b: i32) -> Pair"),
+        "{generated}"
+    );
     compile(&generated).expect("generated Rust compiles");
 }
 
