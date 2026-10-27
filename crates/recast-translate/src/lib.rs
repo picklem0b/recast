@@ -892,6 +892,17 @@ impl<'a> Translator<'a> {
                         continue;
                     }
                     let expected = parameters.get(index).copied().unwrap_or(arg.ty);
+                    if group
+                        .as_ref()
+                        .is_some_and(|group| group.contains_pointer(index))
+                    {
+                        lowered.push(self.slice_reference(arg, expected)?);
+                        continue;
+                    }
+                    if let Some(decayed) = self.decayed_reference(arg, expected)? {
+                        lowered.push(decayed);
+                        continue;
+                    }
                     let value = self.value(arg, expected)?;
                     lowered.push(self.reborrow(value, expected));
                 }
@@ -1279,6 +1290,54 @@ impl<'a> Translator<'a> {
         )
     }
 
+    fn slice_reference(&self, arg: &Expr, expected: TypeId) -> Result<RExpr, TranslateError> {
+        let inner = unwrap_casts(arg);
+        if matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Array { .. })
+        ) {
+            let op = if self.is_mutable_pointer(expected) {
+                "&mut"
+            } else {
+                "&"
+            };
+            return Ok(RExpr::Unary {
+                op,
+                expr: Box::new(self.expr(inner)?),
+            });
+        }
+        self.value(arg, expected)
+    }
+
+    fn decayed_reference(
+        &self,
+        arg: &Expr,
+        expected: TypeId,
+    ) -> Result<Option<RExpr>, TranslateError> {
+        if !self.is_pointer(expected) {
+            return Ok(None);
+        }
+        let inner = unwrap_casts(arg);
+        if !matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Array { .. })
+        ) {
+            return Ok(None);
+        }
+        let op = if self.is_mutable_pointer(expected) {
+            "&mut"
+        } else {
+            "&"
+        };
+        Ok(Some(RExpr::Unary {
+            op,
+            expr: Box::new(RExpr::Index {
+                base: Box::new(self.expr(inner)?),
+                index: Box::new(RExpr::int(0)),
+            }),
+        }))
+    }
+
     /// Copying a pointer in C does not consume it. A Rust `&mut` is moved when
     /// it is passed or assigned, so a place that already holds one is
     /// reborrowed and the holder keeps its pointer for the next use.
@@ -1645,7 +1704,28 @@ fn collect_expr_borrows(program: &Program, expr: &Expr, names: &mut BTreeSet<Str
                 collect_expr_borrows(program, elem, names);
             }
         }
-        ExprKind::Call { args, .. } => {
+        ExprKind::Call { callee, args } => {
+            // An array argument becomes `&mut arr` or `&mut arr[0]`, so the
+            // array's root binding needs `mut` like any other mutable borrow.
+            if let Callee::Direct(id) = callee {
+                if let Some(function) = program.function(id) {
+                    for (index, arg) in args.iter().enumerate() {
+                        let Some(param) = function.signature.params.get(index) else {
+                            continue;
+                        };
+                        if !is_mutable_pointer_type(program, param.ty) {
+                            continue;
+                        }
+                        let inner = unwrap_casts(arg);
+                        if !matches!(program.types.canonical(inner.ty), Some(Type::Array { .. })) {
+                            continue;
+                        }
+                        if let Some(name) = root_local(inner) {
+                            names.insert(name.to_string());
+                        }
+                    }
+                }
+            }
             for arg in args {
                 collect_expr_borrows(program, arg, names);
             }
@@ -1664,6 +1744,26 @@ fn collect_expr_borrows(program: &Program, expr: &Expr, names: &mut BTreeSet<Str
         | ExprKind::EnumConst { .. }
         | ExprKind::Unsupported(_) => {}
     }
+}
+
+/// The expression under parentheses and casts, which is where C hides the
+/// decay of an array argument.
+fn unwrap_casts(expr: &Expr) -> &Expr {
+    let mut current = expr;
+    while let ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } = &current.kind {
+        current = inner;
+    }
+    current
+}
+
+fn is_mutable_pointer_type(program: &Program, id: TypeId) -> bool {
+    matches!(
+        program.types.canonical(id),
+        Some(Type::Pointer {
+            is_const: false,
+            ..
+        })
+    )
 }
 
 /// The local whose storage an assignment writes through fields and indexes.
