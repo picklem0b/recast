@@ -209,9 +209,11 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.26`            | M1 repair: typedef initializers.                                         |
 | `v1.1.27`            | M1 repair: typedef spellings in the V2 driver.                           |
 | `v1.1.28`            | M1 repair: style of the repair set.                                      |
+| `v1.1.29`            | M1 audit: the third pass recorded.                                       |
 | `v1.2.0`             | M2 opens: the workspace version is 1.2.0.                                |
 | `v1.2.1`             | M2: a pointer to one object is a reference.                              |
 | `v1.2.2`             | M2: the V2 driver owns and observes a pointer argument.                  |
 | `v1.2.3`             | M2: the pointer corpus and `ci/m2-corpus.sh`.                            |
 | `v1.2.4`             | M2: `ci/m2-refusals.sh` checks the refusal list.                         |
 | `v1.2.5`             | M2: the audit records the pointer step.                                  |
+| `v1.1.30`            | M1 audit: the tag lists include `v1.1.29`.                               |
