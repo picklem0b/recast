@@ -1108,24 +1108,58 @@ impl<'a> Translator<'a> {
         })
     }
 
+    /// The base of an index expression. C allows any array lvalue here: a
+    /// local, a slice parameter, a field of a value, or an element of an array
+    /// of arrays, which is itself an array in place.
     fn index_base(&self, base: &Expr) -> Result<RExpr, TranslateError> {
         let mut current = base;
         loop {
             match &current.kind {
                 ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => current = inner,
-                ExprKind::Local(name) => {
-                    if self.slice_by_pointer(name).is_some() {
-                        return Ok(RExpr::Path(name.clone()));
-                    }
-                    return match self.program.types.get(current.ty) {
-                        Some(Type::Array { .. }) => Ok(RExpr::Path(name.clone())),
-                        _ => Err(self.error(format!(
-                            "indexing {name} is only supported for arrays and slice parameters"
-                        ))),
-                    };
-                }
-                _ => return Err(self.error("unsupported index base")),
+                _ => break,
             }
+        }
+        match &current.kind {
+            ExprKind::Local(name) => {
+                if self.slice_by_pointer(name).is_some() {
+                    return Ok(RExpr::Path(name.clone()));
+                }
+                if matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) {
+                    return Ok(RExpr::Path(name.clone()));
+                }
+                Err(self.error(format!(
+                    "indexing {name} is only supported for arrays and slice parameters"
+                )))
+            }
+            ExprKind::Member { base, field, arrow } => {
+                if *arrow {
+                    return Err(self.error(
+                        "pointer member access is outside the M1 subset; use a slice or a value",
+                    ));
+                }
+                if !matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) {
+                    return Err(self.error(format!("field {field} is not an array")));
+                }
+                Ok(RExpr::Field {
+                    base: Box::new(self.expr(base)?),
+                    field: field.clone(),
+                })
+            }
+            ExprKind::Index { .. }
+                if matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) =>
+            {
+                self.expr(current)
+            }
+            _ => Err(self.error("unsupported index base")),
         }
     }
 
