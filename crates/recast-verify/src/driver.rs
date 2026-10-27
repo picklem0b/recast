@@ -61,50 +61,53 @@ fn call_driver(
             call.function
         )));
     }
-    let (c_args, r_args) = arguments(program, function, &call.args)?;
-    let c_call = format!("{}({})", function.name, c_args.join(", "));
-    let r_call = format!("generated::{}({})", function.name, r_args.join(", "));
+    let arguments = arguments(program, function, &call.args)?;
+    let c_call = format!("{}({})", function.name, arguments.c_args.join(", "));
+    let r_call = format!(
+        "generated::{}({})",
+        function.name,
+        arguments.r_args.join(", ")
+    );
     let ret = function.signature.ret;
     // A typedef of a record returns a record: the canonical type decides how
     // the value is printed, and the spelling named by the typedef is the one
-    // the source can compile.
+    // the source can compile. Every call runs in its own block, so a pointer
+    // argument's place exists before the call and can be printed after it.
+    let mut c_lines = arguments.c_setup;
+    let mut r_lines = arguments.r_setup;
+    let mut c_values = Vec::new();
+    let mut r_values = Vec::new();
+
     match program.types.canonical(ret) {
         Some(Type::Void) => {
-            c_body.push_str(&format!("    {c_call};\n    printf(\"void\\n\");\n"));
-            r_body.push_str(&format!("    {r_call};\n    println!(\"void\");\n"));
+            c_lines.push(c_call);
+            r_lines.push(r_call);
         }
         Some(Type::Record { .. }) => {
             let mut fields = Vec::new();
             flatten_fields(program, ret, "r", &mut fields)?;
+            if fields.is_empty() {
+                return Err(Error::Unsupported(
+                    "a record with no printable field cannot be compared".to_string(),
+                ));
+            }
             let spelled = c_type(program, ret);
-            let format = vec!["%lld"; fields.len()].join(" ");
-            let c_values = fields
-                .iter()
-                .map(|(path, _)| format!("(long long)({path})"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            c_body.push_str(&format!(
-                "    {{ {spelled} r = {c_call}; printf(\"{format}\\n\", {c_values}); }}\n"
-            ));
-            let r_format = vec!["{}"; fields.len()].join(" ");
-            let r_values = fields
-                .iter()
-                .map(|(path, _)| format!("{path} as i64"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            r_body.push_str(&format!(
-                "    {{ let r = {r_call}; println!(\"{r_format}\", {r_values}); }}\n"
-            ));
+            c_lines.push(format!("{spelled} r = {c_call}"));
+            r_lines.push(format!("let r = {r_call}"));
+            for (path, _) in &fields {
+                c_values.push(format!("(long long)({path})"));
+                r_values.push(format!("{path} as i64"));
+            }
         }
         Some(Type::Bool | Type::Char { .. } | Type::Int { .. } | Type::Enum { .. }) => {
-            c_body.push_str(&format!(
-                "    printf(\"%lld\\n\", (long long)({c_call}));\n"
-            ));
-            r_body.push_str(&format!("    println!(\"{{}}\", ({r_call}) as i64);\n"));
+            c_lines.push(format!("long long r = (long long)({c_call})"));
+            r_lines.push(format!("let r = ({r_call}) as i64"));
+            c_values.push("r".to_string());
+            r_values.push("r".to_string());
         }
         Some(Type::Float { .. }) => {
             return Err(Error::Unsupported(
-                "floating-point differential output is not part of M1".to_string(),
+                "floating-point differential output is not part of this milestone".to_string(),
             ))
         }
         other => {
@@ -113,19 +116,74 @@ fn call_driver(
             )))
         }
     }
+    c_values.extend(arguments.c_observed);
+    r_values.extend(arguments.r_observed);
+
+    let c_print = if c_values.is_empty() {
+        "printf(\"void\\n\");".to_string()
+    } else {
+        let format = vec!["%lld"; c_values.len()].join(" ");
+        format!("printf(\"{format}\\n\", {});", c_values.join(", "))
+    };
+    let r_print = if r_values.is_empty() {
+        "println!(\"void\");".to_string()
+    } else {
+        let format = vec!["{}"; r_values.len()].join(" ");
+        format!("println!(\"{format}\", {});", r_values.join(", "))
+    };
+
+    c_body.push_str("    {\n");
+    for line in &c_lines {
+        c_body.push_str("        ");
+        c_body.push_str(line);
+        c_body.push_str(";\n");
+    }
+    c_body.push_str("        ");
+    c_body.push_str(&c_print);
+    c_body.push_str("\n    }\n");
+
+    r_body.push_str("    {\n");
+    for line in &r_lines {
+        r_body.push_str("        ");
+        r_body.push_str(line);
+        r_body.push_str(";\n");
+    }
+    r_body.push_str("        ");
+    r_body.push_str(&r_print);
+    r_body.push_str("\n    }\n");
     Ok(())
 }
 
-/// Build the two sides of one call's argument list.
+/// One call's argument lists, plus the places a pointer argument needs.
+pub(crate) struct Arguments {
+    c_args: Vec<String>,
+    r_args: Vec<String>,
+    /// Statements that declare the place a pointer argument refers to.
+    c_setup: Vec<String>,
+    r_setup: Vec<String>,
+    /// Expressions printed after the call, for a pointee the callee may write.
+    c_observed: Vec<String>,
+    r_observed: Vec<String>,
+}
+
+/// Build the two sides of one call's argument list. A pointer argument gets a
+/// place of its own before the call, so an output parameter can be compared
+/// after it.
 pub(crate) fn arguments(
     program: &Program,
     function: &Function,
     values: &[Value],
-) -> Result<(Vec<String>, Vec<String>), Error> {
+) -> Result<Arguments, Error> {
     let params = &function.signature.params;
     let length_index = slice_length_index(program, function);
-    let mut c_args = Vec::new();
-    let mut r_args = Vec::new();
+    let mut arguments = Arguments {
+        c_args: Vec::new(),
+        r_args: Vec::new(),
+        c_setup: Vec::new(),
+        r_setup: Vec::new(),
+        c_observed: Vec::new(),
+        r_observed: Vec::new(),
+    };
     let mut used = 0;
     let mut slice_len: Option<usize> = None;
 
@@ -139,7 +197,7 @@ pub(crate) fn arguments(
                     function.name
                 ))
             })?;
-            c_args.push(len.to_string());
+            arguments.c_args.push(len.to_string());
             continue;
         }
         let value = values.get(used).ok_or_else(|| {
@@ -161,12 +219,25 @@ pub(crate) fn arguments(
             } else {
                 slice_len = Some(len);
             }
-            c_args.push(c);
-            r_args.push(rust);
+            arguments.c_args.push(c);
+            arguments.r_args.push(rust);
+        } else if matches!(
+            program.types.canonical(param.ty),
+            Some(Type::Pointer { .. })
+        ) {
+            let pointer = pointer_argument(program, param.ty, value, index)?;
+            arguments.c_args.push(pointer.c_arg);
+            arguments.r_args.push(pointer.r_arg);
+            arguments.c_setup.push(pointer.c_setup);
+            arguments.r_setup.push(pointer.r_setup);
+            if let (Some(c), Some(rust)) = (pointer.c_observed, pointer.r_observed) {
+                arguments.c_observed.push(c);
+                arguments.r_observed.push(rust);
+            }
         } else {
             let (c, rust) = value_argument(program, param.ty, value)?;
-            c_args.push(c);
-            r_args.push(rust);
+            arguments.c_args.push(c);
+            arguments.r_args.push(rust);
         }
     }
     if used != values.len() {
@@ -176,7 +247,70 @@ pub(crate) fn arguments(
             values.len()
         )));
     }
-    Ok((c_args, r_args))
+    Ok(arguments)
+}
+
+struct PointerArgument {
+    c_setup: String,
+    r_setup: String,
+    c_arg: String,
+    r_arg: String,
+    c_observed: Option<String>,
+    r_observed: Option<String>,
+}
+
+/// A pointer to one scalar: the case value is the pointee's initial value. A
+/// non-const pointer is an output parameter, so its value is printed after the
+/// call as well.
+fn pointer_argument(
+    program: &Program,
+    ty: TypeId,
+    value: &Value,
+    index: usize,
+) -> Result<PointerArgument, Error> {
+    let Some(Type::Pointer { pointee, is_const }) = program.types.canonical(ty) else {
+        return Err(Error::Case("expected a pointer parameter".to_string()));
+    };
+    let rust_type = rust_scalar(program, *pointee).ok_or_else(|| {
+        Error::Unsupported(
+            "a pointer whose pointee is not a scalar is the next M2 step".to_string(),
+        )
+    })?;
+    let c_type = c_type(program, *pointee);
+    let (c_value, r_value) = value_argument(program, *pointee, value)?;
+    let name = format!("a{index}");
+    let mutable = !*is_const;
+    Ok(PointerArgument {
+        c_setup: format!("{c_type} {name} = {c_value}"),
+        r_setup: if mutable {
+            format!("let mut {name}: {rust_type} = {r_value}")
+        } else {
+            format!("let {name}: {rust_type} = {r_value}")
+        },
+        c_arg: format!("&{name}"),
+        r_arg: if mutable {
+            format!("&mut {name}")
+        } else {
+            format!("&{name}")
+        },
+        c_observed: mutable.then(|| format!("(long long)({name})")),
+        r_observed: mutable.then(|| format!("{name} as i64")),
+    })
+}
+
+/// The Rust spelling of a scalar the driver can own and print.
+fn rust_scalar(program: &Program, id: TypeId) -> Option<String> {
+    match program.types.canonical(id) {
+        Some(Type::Bool) => Some("bool".to_string()),
+        Some(Type::Char { signed }) => Some(if *signed { "i8" } else { "u8" }.to_string()),
+        Some(Type::Int { bits, signed, .. }) => {
+            Some(format!("{}{}", if *signed { 'i' } else { 'u' }, bits))
+        }
+        Some(Type::Enum { name }) => program
+            .enum_named(name)
+            .and_then(|item| rust_scalar(program, item.underlying)),
+        _ => None,
+    }
 }
 
 fn slice_length_index(program: &Program, function: &Function) -> Option<usize> {
