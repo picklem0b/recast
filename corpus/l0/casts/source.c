@@ -26,3 +26,9 @@ long widened(int n) {
 unsigned int unsigned_of_int(int n) {
     return (unsigned int)n;
 }
+
+/* A cast on the left of a comparison keeps its parentheses: Rust reads
+   `n as u32 < 3` as generic arguments and rejects it. */
+int below(int n) {
+    return (unsigned int)n < 3;
+}

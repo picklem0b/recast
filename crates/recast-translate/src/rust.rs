@@ -147,7 +147,15 @@ impl Expr {
             }
             Expr::Binary { op, lhs, rhs } => {
                 let precedence = self.precedence();
-                out.push_str(&lhs.wrapped(precedence));
+                if op.starts_with('<') && matches!(**lhs, Expr::Cast { .. }) {
+                    // `x as T < y` reads as generic arguments for `T`, so the
+                    // cast needs parentheses even though `as` binds tighter.
+                    out.push('(');
+                    lhs.render(out);
+                    out.push(')');
+                } else {
+                    out.push_str(&lhs.wrapped(precedence));
+                }
                 let _ = write!(out, " {op} ");
                 out.push_str(&rhs.wrapped(precedence + 1));
             }
@@ -615,6 +623,29 @@ mod tests {
             rhs: Box::new(Expr::int(2)),
         };
         assert_eq!(expr.render_to_string(), "(a + b) * 2");
+    }
+
+    #[test]
+    fn a_cast_on_the_left_of_a_less_than_is_parenthesized() {
+        let cast = || Expr::Cast {
+            expr: Box::new(Expr::Path("a".into())),
+            ty: "u32".into(),
+        };
+        for op in ["<", "<=", "<<"] {
+            let expr = Expr::Binary {
+                op,
+                lhs: Box::new(cast()),
+                rhs: Box::new(Expr::Path("b".into())),
+            };
+            assert_eq!(expr.render_to_string(), format!("(a as u32) {op} b"));
+        }
+        // Operators that cannot be read as generic arguments stay unchanged.
+        let shift = Expr::Binary {
+            op: ">>",
+            lhs: Box::new(cast()),
+            rhs: Box::new(Expr::Path("b".into())),
+        };
+        assert_eq!(shift.render_to_string(), "a as u32 >> b");
     }
 
     #[test]
