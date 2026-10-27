@@ -60,6 +60,14 @@
     {
       "function": "chars",
       "args": []
+    },
+    {
+      "function": "all_bits",
+      "args": []
+    },
+    {
+      "function": "max_unsigned",
+      "args": []
     }
   ]
 }

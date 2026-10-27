@@ -11,6 +11,7 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/JSONCompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -27,6 +28,19 @@ namespace {
 using llvm::json::Array;
 using llvm::json::Object;
 using llvm::json::Value;
+
+/// The TIR stores one `i64` per constant. A signed constant keeps its sign, an
+/// unsigned constant keeps its value (so `4000000000u` is not sign-extended to
+/// a negative number), and an unsigned 64-bit constant that does not fit `i64`
+/// keeps its bit pattern, which the translator renders back at its own width.
+std::int64_t constant_value(const llvm::APInt &value, bool is_unsigned) {
+  return is_unsigned ? static_cast<std::int64_t>(value.getZExtValue())
+                     : value.getSExtValue();
+}
+
+std::int64_t constant_value(const llvm::APSInt &value) {
+  return constant_value(value, value.isUnsigned());
+}
 
 struct AstState {
   std::vector<Object> units;
@@ -271,7 +285,8 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
       }
       if (auto *case_stmt = clang::dyn_cast<clang::CaseStmt>(child)) {
         auto value = case_stmt->getLHS()->EvaluateKnownConstInt(context);
-        begin_case(value.getSExtValue());
+        bool is_unsigned = case_stmt->getLHS()->getType()->isUnsignedIntegerOrEnumerationType();
+        begin_case(constant_value(value, is_unsigned));
         append(case_stmt->getSubStmt(), true);
         return;
       }
@@ -358,7 +373,8 @@ Object expr_json(const clang::Expr *expr, clang::ASTContext &context) {
   if (auto *literal = clang::dyn_cast<clang::IntegerLiteral>(expr)) {
     Object node;
     node["kind"] = "int_lit";
-    node["value"] = literal->getValue().getSExtValue();
+    bool is_unsigned = expr->getType()->isUnsignedIntegerOrEnumerationType();
+    node["value"] = constant_value(literal->getValue(), is_unsigned);
     node["type"] = type_json(expr->getType(), context);
     return node;
   }
@@ -590,7 +606,7 @@ public:
     for (const clang::EnumConstantDecl *constant : item->enumerators()) {
       Object entry;
       entry["name"] = constant->getNameAsString();
-      entry["value"] = constant->getInitVal().getSExtValue();
+      entry["value"] = constant_value(constant->getInitVal());
       variants.push_back(std::move(entry));
     }
     node["variants"] = std::move(variants);

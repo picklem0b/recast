@@ -57,3 +57,15 @@ int low_nibble(int value) {
     }
     return -1;
 }
+
+/* Unsigned case labels keep their value too. */
+int classify_unsigned(unsigned int key) {
+    switch (key) {
+        case 4000000000u:
+            return 4;
+        case 2147483648u:
+            return 2;
+        default:
+            return 0;
+    }
+}

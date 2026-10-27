@@ -45,3 +45,13 @@ int radix(void) {
 int chars(void) {
     return 'A' + '\n' + '0';
 }
+
+/* Unsigned literals keep their value: sign-extending them would turn
+   4294967295 into -1. */
+unsigned int all_bits(void) {
+    return 0xFFFFFFFFu;
+}
+
+unsigned long max_unsigned(void) {
+    return 18446744073709551615ul;
+}
