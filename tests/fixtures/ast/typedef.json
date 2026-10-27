@@ -1,0 +1,192 @@
+{
+  "schema": "recast-ast/1",
+  "target": {
+    "triple": "aarch64-unknown-linux-gnu",
+    "pointer_bits": 64,
+    "int_bits": 32,
+    "long_bits": 64,
+    "long_long_bits": 64,
+    "char_signed": false,
+    "endian": "little"
+  },
+  "translation_units": [
+    {
+      "file": "tests/fixtures/typedef.c",
+      "functions": [
+        {
+          "name": "sum",
+          "linkage": "external",
+          "return_type": {
+            "kind": "int",
+            "bits": 32,
+            "signed": true,
+            "spelling": "int"
+          },
+          "params": [
+            {
+              "name": "p",
+              "type": {
+                "kind": "named",
+                "name": "Pair",
+                "canonical": {
+                  "kind": "record",
+                  "name": "Pair"
+                }
+              }
+            }
+          ],
+          "body": {
+            "kind": "compound",
+            "stmts": [
+              {
+                "kind": "return",
+                "value": {
+                  "type": {
+                    "kind": "int",
+                    "bits": 32,
+                    "signed": true,
+                    "spelling": "int"
+                  },
+                  "kind": "binary",
+                  "op": "+",
+                  "lhs": {
+                    "type": {
+                      "kind": "int",
+                      "bits": 32,
+                      "signed": true,
+                      "spelling": "int"
+                    },
+                    "kind": "cast",
+                    "to": {
+                      "kind": "int",
+                      "bits": 32,
+                      "signed": true,
+                      "spelling": "int"
+                    },
+                    "expr": {
+                      "type": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "kind": "member",
+                      "base": {
+                        "type": {
+                          "kind": "named",
+                          "name": "Pair",
+                          "canonical": {
+                            "kind": "record",
+                            "name": "Pair"
+                          }
+                        },
+                        "kind": "decl_ref",
+                        "name": "p"
+                      },
+                      "field": "a",
+                      "arrow": false
+                    },
+                    "implicit": true
+                  },
+                  "rhs": {
+                    "type": {
+                      "kind": "int",
+                      "bits": 32,
+                      "signed": true,
+                      "spelling": "int"
+                    },
+                    "kind": "cast",
+                    "to": {
+                      "kind": "int",
+                      "bits": 32,
+                      "signed": true,
+                      "spelling": "int"
+                    },
+                    "expr": {
+                      "type": {
+                        "kind": "int",
+                        "bits": 32,
+                        "signed": true,
+                        "spelling": "int"
+                      },
+                      "kind": "member",
+                      "base": {
+                        "type": {
+                          "kind": "named",
+                          "name": "Pair",
+                          "canonical": {
+                            "kind": "record",
+                            "name": "Pair"
+                          }
+                        },
+                        "kind": "decl_ref",
+                        "name": "p"
+                      },
+                      "field": "b",
+                      "arrow": false
+                    },
+                    "implicit": true
+                  }
+                },
+                "span": {
+                  "file": "/root/recast/tests/fixtures/typedef.c",
+                  "line": 7,
+                  "column": 5
+                }
+              }
+            ]
+          },
+          "span": {
+            "file": "tests/fixtures/typedef.c",
+            "line": 6,
+            "column": 5
+          }
+        }
+      ],
+      "records": [
+        {
+          "name": "Pair",
+          "fields": [
+            {
+              "name": "a",
+              "type": {
+                "kind": "int",
+                "bits": 32,
+                "signed": true,
+                "spelling": "int"
+              },
+              "span": {
+                "file": "/root/recast/tests/fixtures/typedef.c",
+                "line": 2,
+                "column": 9
+              }
+            },
+            {
+              "name": "b",
+              "type": {
+                "kind": "int",
+                "bits": 32,
+                "signed": true,
+                "spelling": "int"
+              },
+              "span": {
+                "file": "/root/recast/tests/fixtures/typedef.c",
+                "line": 3,
+                "column": 9
+              }
+            }
+          ],
+          "size": 8,
+          "align": 4,
+          "span": {
+            "file": "/root/recast/tests/fixtures/typedef.c",
+            "line": 1,
+            "column": 9
+          }
+        }
+      ],
+      "enums": [],
+      "globals": []
+    }
+  ]
+}

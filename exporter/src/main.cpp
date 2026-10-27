@@ -42,6 +42,19 @@ std::int64_t constant_value(const llvm::APSInt &value) {
   return constant_value(value, value.isUnsigned());
 }
 
+/// The exported name of a record or enum: its own name, or the typedef that
+/// declares an anonymous one. Empty when the tag has neither, which the type
+/// table reports as unknown instead of as a type with no name.
+std::string tag_name(const clang::TagDecl *decl) {
+  std::string name = decl->getNameAsString();
+  if (name.empty()) {
+    if (const auto *typedef_decl = decl->getTypedefNameForAnonDecl()) {
+      name = typedef_decl->getNameAsString();
+    }
+  }
+  return name;
+}
+
 struct AstState {
   std::vector<Object> units;
   std::optional<Object> target;
@@ -105,15 +118,23 @@ Value type_json(clang::QualType type, clang::ASTContext &context) {
     return Value(std::move(named));
   }
   if (const auto *enum_type = type->getAs<clang::EnumType>()) {
+    std::string name = tag_name(enum_type->getDecl());
+    if (name.empty()) {
+      return Value(scalar("unknown", "anonymous enum"));
+    }
     Object node;
     node["kind"] = "enum";
-    node["name"] = enum_type->getDecl()->getNameAsString();
+    node["name"] = name;
     return Value(std::move(node));
   }
   if (const auto *record_type = type->getAs<clang::RecordType>()) {
+    std::string name = tag_name(record_type->getDecl());
+    if (name.empty()) {
+      return Value(scalar("unknown", "anonymous record"));
+    }
     Object node;
     node["kind"] = "record";
-    node["name"] = record_type->getDecl()->getNameAsString();
+    node["name"] = name;
     return Value(std::move(node));
   }
   if (type->isIntegerType()) {
@@ -576,16 +597,21 @@ public:
       : context(context), output(output) {}
 
   bool VisitRecordDecl(clang::RecordDecl *record) {
-    if (!record->isCompleteDefinition() || record->isAnonymousStructOrUnion() ||
-        record->getDeclContext()->isFunctionOrMethod()) {
+    if (!record->isCompleteDefinition() || record->getDeclContext()->isFunctionOrMethod()) {
       return true;
     }
     auto &source = context.getSourceManager();
     if (!source.isWrittenInMainFile(record->getLocation())) {
       return true;
     }
+    // A record declared only through a typedef names itself after the
+    // typedef; one that has neither is not representable.
+    std::string name = tag_name(record);
+    if (name.empty()) {
+      return true;
+    }
     Object node;
-    node["name"] = record->getNameAsString();
+    node["name"] = name;
     clang::QualType self = context.getRecordType(record);
     node["size"] = static_cast<int64_t>(context.getTypeSizeInChars(self).getQuantity());
     node["align"] = static_cast<int64_t>(context.getTypeAlignInChars(self).getQuantity());
@@ -604,15 +630,19 @@ public:
   }
 
   bool VisitEnumDecl(clang::EnumDecl *item) {
-    if (!item->isCompleteDefinition() || item->getName().empty()) {
+    if (!item->isCompleteDefinition()) {
       return true;
     }
     auto &source = context.getSourceManager();
     if (!source.isWrittenInMainFile(item->getLocation())) {
       return true;
     }
+    std::string name = tag_name(item);
+    if (name.empty()) {
+      return true;
+    }
     Object node;
-    node["name"] = item->getNameAsString();
+    node["name"] = name;
     node["underlying"] = type_json(item->getIntegerType(), context);
     node["span"] = span_json(item->getLocation(), context);
     Array variants;

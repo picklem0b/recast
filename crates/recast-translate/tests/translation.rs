@@ -100,6 +100,17 @@ fn mutable_parameters_and_c_comparison_values_compile() {
 }
 
 #[test]
+fn an_anonymous_typedef_record_keeps_its_name() {
+    let generated = source(include_str!("../../../tests/fixtures/ast/typedef.json"));
+    assert!(generated.contains("pub struct Pair"), "{generated}");
+    assert!(
+        generated.contains("pub fn sum(p: Pair) -> i32"),
+        "{generated}"
+    );
+    compile(&generated).expect("generated Rust compiles");
+}
+
+#[test]
 fn translation_is_deterministic() {
     let json = include_str!("../../../tests/fixtures/ast/sum.json");
     assert_eq!(source(json), source(json));
