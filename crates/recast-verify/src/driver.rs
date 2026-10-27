@@ -65,15 +65,18 @@ fn call_driver(
     let c_call = format!("{}({})", function.name, c_args.join(", "));
     let r_call = format!("generated::{}({})", function.name, r_args.join(", "));
     let ret = function.signature.ret;
-    match program.types.get(ret) {
+    // A typedef of a record returns a record: the canonical type decides how
+    // the value is printed, and the spelling named by the typedef is the one
+    // the source can compile.
+    match program.types.canonical(ret) {
         Some(Type::Void) => {
             c_body.push_str(&format!("    {c_call};\n    printf(\"void\\n\");\n"));
             r_body.push_str(&format!("    {r_call};\n    println!(\"void\");\n"));
         }
-        Some(Type::Record { name }) => {
+        Some(Type::Record { .. }) => {
             let mut fields = Vec::new();
             flatten_fields(program, ret, "r", &mut fields)?;
-            let c_type = format!("struct {name}");
+            let spelled = c_type(program, ret);
             let format = vec!["%lld"; fields.len()].join(" ");
             let c_values = fields
                 .iter()
@@ -81,7 +84,7 @@ fn call_driver(
                 .collect::<Vec<_>>()
                 .join(", ");
             c_body.push_str(&format!(
-                "    {{ {c_type} r = {c_call}; printf(\"{format}\\n\", {c_values}); }}\n"
+                "    {{ {spelled} r = {c_call}; printf(\"{format}\\n\", {c_values}); }}\n"
             ));
             let r_format = vec!["{}"; fields.len()].join(" ");
             let r_values = fields
@@ -93,8 +96,7 @@ fn call_driver(
                 "    {{ let r = {r_call}; println!(\"{r_format}\", {r_values}); }}\n"
             ));
         }
-        Some(Type::Bool | Type::Char { .. } | Type::Int { .. } | Type::Enum { .. })
-        | Some(Type::Named { .. }) => {
+        Some(Type::Bool | Type::Char { .. } | Type::Int { .. } | Type::Enum { .. }) => {
             c_body.push_str(&format!(
                 "    printf(\"%lld\\n\", (long long)({c_call}));\n"
             ));
@@ -263,6 +265,10 @@ fn slice_argument(
 }
 
 fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(String, String), Error> {
+    // The type as the source spells it: a typedef name for an alias, a
+    // `struct`/`enum` tag otherwise. The driver includes the source, so both
+    // are in scope.
+    let spelled = c_type(program, ty);
     match program.types.canonical(ty) {
         Some(Type::Bool) => {
             let flag = value
@@ -295,7 +301,7 @@ fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(Strin
                 r_fields.push(format!("{}: {rust}", field.name));
             }
             Ok((
-                format!("(struct {name}){{{}}}", c_fields.join(", ")),
+                format!("({spelled}){{{}}}", c_fields.join(", ")),
                 format!("generated::{name} {{ {} }}", r_fields.join(", ")),
             ))
         }
@@ -383,13 +389,10 @@ fn c_type(program: &Program, id: TypeId) -> String {
         Some(Type::Float { spelling, .. }) => spelling.clone(),
         Some(Type::Record { name }) => format!("struct {name}"),
         Some(Type::Enum { name }) => format!("enum {name}"),
-        Some(Type::Named { name, canonical }) => {
-            if name == "size_t" {
-                "size_t".to_string()
-            } else {
-                c_type(program, *canonical)
-            }
-        }
+        // A typedef name is the spelling the source uses, and the driver
+        // includes the source, so `size_t`, `uint` and a record typedef are
+        // all in scope. A tag needs its keyword: `struct Point`.
+        Some(Type::Named { name, .. }) => name.clone(),
         Some(Type::Array { elem, len }) => format!("{}[{len}]", c_type(program, *elem)),
         _ => "long".to_string(),
     }

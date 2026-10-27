@@ -91,6 +91,68 @@
         0,
         0
       ]
+    },
+    {
+      "function": "make_pair",
+      "args": [
+        3,
+        4
+      ]
+    },
+    {
+      "function": "make_pair",
+      "args": [
+        -1,
+        0
+      ]
+    },
+    {
+      "function": "pair_sum",
+      "args": [
+        {
+          "a": 3,
+          "b": 4
+        }
+      ]
+    },
+    {
+      "function": "pair_sum",
+      "args": [
+        {
+          "a": -5,
+          "b": 2
+        }
+      ]
+    },
+    {
+      "function": "twice",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "twice",
+      "args": [
+        21
+      ]
+    },
+    {
+      "function": "color_index",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "color_index",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "color_index",
+      "args": [
+        2
+      ]
     }
   ]
 }
