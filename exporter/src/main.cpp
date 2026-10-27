@@ -334,7 +334,9 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
         std::optional<llvm::StringRef> kind = last.getAsObject()
                                                  ? last.getAsObject()->getString("kind")
                                                  : std::nullopt;
-        falls = !(kind && (*kind == "break" || *kind == "return"));
+        // `continue` leaves the switch for the enclosing loop, so the next
+        // case is not reached and the arm does not fall through.
+        falls = !(kind && (*kind == "break" || *kind == "return" || *kind == "continue"));
       }
       (*entry)["falls_through"] = falls;
     }

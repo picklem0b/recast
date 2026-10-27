@@ -108,3 +108,22 @@ int scaled(int key, int value) {
     }
     return total;
 }
+
+/* A `continue` in an arm leaves the switch for the loop; it is not
+   fallthrough into the next case. */
+int skip_threes(int limit) {
+    int total = 0;
+    for (int i = 0; i < limit; i++) {
+        switch (i % 3) {
+            case 0:
+                continue;
+            case 1:
+                total += i;
+                break;
+            default:
+                total += 10;
+        }
+        total += 100;
+    }
+    return total;
+}

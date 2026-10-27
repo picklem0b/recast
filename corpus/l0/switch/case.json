@@ -241,6 +241,36 @@
         7,
         10
       ]
+    },
+    {
+      "function": "skip_threes",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "skip_threes",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "skip_threes",
+      "args": [
+        4
+      ]
+    },
+    {
+      "function": "skip_threes",
+      "args": [
+        7
+      ]
+    },
+    {
+      "function": "skip_threes",
+      "args": [
+        10
+      ]
     }
   ]
 }
