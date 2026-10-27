@@ -58,3 +58,16 @@ int do_sum(int n) {
 int label_value(int n) {
     return n > 10 ? 100 : n * 2;
 }
+
+/* A value cast to `void` is evaluated and dropped. */
+void discard(int value) {
+    (void)value;
+}
+
+/* The same statement around a call, followed by an ordinary assignment. */
+int counted(int n) {
+    int total = 0;
+    (void)discard(total);
+    total = sign(n);
+    return total;
+}

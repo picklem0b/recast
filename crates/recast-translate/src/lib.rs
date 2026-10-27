@@ -628,6 +628,12 @@ impl<'a> Translator<'a> {
     }
 
     fn expr_statement(&self, expr: &Expr) -> Result<RStmt, TranslateError> {
+        if let ExprKind::Cast { to, expr, .. } = &expr.kind {
+            if matches!(self.program.types.get(*to), Some(Type::Void)) {
+                // `(void)x;` evaluates `x` and drops the value.
+                return Ok(RStmt::Discard(self.expr(expr)?));
+            }
+        }
         match &expr.kind {
             ExprKind::Assign { op, lhs, rhs } => self.assign_statement(op, lhs, rhs),
             ExprKind::Unary {

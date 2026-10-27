@@ -305,6 +305,9 @@ pub enum Stmt {
         value: Expr,
     },
     Expr(Expr),
+    /// Evaluate an expression for its effects and drop the value, which is
+    /// what a C `(void)expr;` asks for.
+    Discard(Expr),
     If {
         cond: Expr,
         then_body: Vec<Stmt>,
@@ -493,6 +496,9 @@ impl Stmt {
             }
             Stmt::Expr(expr) => {
                 let _ = writeln!(out, "{pad}{};", expr.render_to_string());
+            }
+            Stmt::Discard(expr) => {
+                let _ = writeln!(out, "{pad}let _ = {};", expr.render_to_string());
             }
             Stmt::If {
                 cond,
