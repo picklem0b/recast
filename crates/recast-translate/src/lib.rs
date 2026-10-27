@@ -139,6 +139,7 @@ fn append_global(
         function: &global.name,
         ret: global.ty,
         assigned: BTreeSet::new(),
+        params: BTreeSet::new(),
         slices: Vec::new(),
     };
     let value = translator.value(init, global.ty)?;
@@ -203,6 +204,7 @@ struct Translator<'a> {
     function: &'a str,
     ret: TypeId,
     assigned: BTreeSet<String>,
+    params: BTreeSet<String>,
     slices: Vec<SlicePlan>,
     /// Serial for generated labels, so two nested loops cannot shadow another
     /// loop's label.
@@ -253,11 +255,19 @@ impl<'a> Translator<'a> {
             collect_mutable_borrows(program, body, &mut assigned);
         }
 
+        let mut params = BTreeSet::new();
+        for param in &function.signature.params {
+            if let Some(name) = &param.name {
+                params.insert(name.clone());
+            }
+        }
+
         Ok(Self {
             program,
             function: &function.name,
             ret: function.signature.ret,
             assigned,
+            params,
             slices,
             labels: Cell::new(0),
         })
@@ -614,7 +624,7 @@ impl<'a> Translator<'a> {
     fn decl(&self, name: &str, ty: TypeId, init: Option<&Expr>) -> Result<RStmt, TranslateError> {
         let rust_ty = self.rust_type(ty)?;
         let init = match init {
-            Some(init) => Some(self.value(init, ty)?),
+            Some(init) => Some(self.reborrow(self.value(init, ty)?, ty)),
             None => match self.program.types.canonical(ty) {
                 Some(Type::Array { .. }) | Some(Type::Record { .. }) => {
                     // C leaves these indeterminate. Zeroing keeps the generated
@@ -686,6 +696,19 @@ impl<'a> Translator<'a> {
                 value: shift,
             });
         }
+        if op == "=" && self.is_mutable_pointer(lhs.ty) {
+            // `p = q` leaves both C pointers valid, which two Rust `&mut`
+            // references cannot express. A fresh borrow (`p = &x`) and a local
+            // that has not taken a borrow yet are still fine; a parameter that
+            // already holds one is not.
+            if let Some(name) = root_local(lhs) {
+                if self.params.contains(name) {
+                    return Err(self.error(format!(
+                        "{name} is a pointer parameter; assigning it another pointer needs the M2 ownership model"
+                    )));
+                }
+            }
+        }
         let op = match op {
             "=" => "=",
             "+=" => "+=",
@@ -725,7 +748,7 @@ impl<'a> Translator<'a> {
         Ok(RStmt::Assign {
             target: self.expr(lhs)?,
             op,
-            value: self.value(rhs, lhs.ty)?,
+            value: self.reborrow(self.value(rhs, lhs.ty)?, lhs.ty),
         })
     }
 
@@ -876,25 +899,7 @@ impl<'a> Translator<'a> {
                 for (index, arg) in args.iter().enumerate() {
                     let expected = parameters.get(index).copied().unwrap_or(arg.ty);
                     let value = self.value(arg, expected)?;
-                    // Passing a pointer copies it in C. A Rust `&mut` argument
-                    // is moved, so a place holding one is reborrowed; the
-                    // caller keeps its pointer for the next call.
-                    if self.is_mutable_pointer(expected)
-                        && matches!(
-                            value,
-                            RExpr::Path(_) | RExpr::Field { .. } | RExpr::Index { .. }
-                        )
-                    {
-                        lowered.push(RExpr::Unary {
-                            op: "&mut",
-                            expr: Box::new(RExpr::Unary {
-                                op: "*",
-                                expr: Box::new(value),
-                            }),
-                        });
-                    } else {
-                        lowered.push(value);
-                    }
+                    lowered.push(self.reborrow(value, expected));
                 }
                 Ok(RExpr::Call {
                     callee: Box::new(RExpr::Path(name)),
@@ -1278,6 +1283,28 @@ impl<'a> Translator<'a> {
                 ..
             })
         )
+    }
+
+    /// Copying a pointer in C does not consume it. A Rust `&mut` is moved when
+    /// it is passed or assigned, so a place that already holds one is
+    /// reborrowed and the holder keeps its pointer for the next use.
+    fn reborrow(&self, value: RExpr, ty: TypeId) -> RExpr {
+        if self.is_mutable_pointer(ty)
+            && matches!(
+                value,
+                RExpr::Path(_) | RExpr::Field { .. } | RExpr::Index { .. }
+            )
+        {
+            RExpr::Unary {
+                op: "&mut",
+                expr: Box::new(RExpr::Unary {
+                    op: "*",
+                    expr: Box::new(value),
+                }),
+            }
+        } else {
+            value
+        }
     }
 
     fn int_width(&self, id: TypeId) -> Result<u64, TranslateError> {
