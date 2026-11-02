@@ -34,3 +34,14 @@ int dot(const int *a, const int *b, size_t n) {
     }
     return total;
 }
+
+int first(const int *a, size_t n) {
+    return a[0];
+}
+
+int first_or(const int *a, size_t n) {
+    if (n == 0) {
+        return -1;
+    }
+    return a[0];
+}

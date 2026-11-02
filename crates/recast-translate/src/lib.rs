@@ -77,6 +77,8 @@ pub fn translate(program: &Program) -> Result<Translation, TranslateError> {
         if function.body.is_none() {
             continue;
         }
+        check_ident(&function.name)
+            .map_err(|message| TranslateError::new(&function.name, message))?;
         let translator = Translator::new(program, function)?;
         file.fns.push(translator.function_item(function)?);
     }
@@ -85,14 +87,42 @@ pub fn translate(program: &Program) -> Result<Translation, TranslateError> {
     })
 }
 
+/// Rust keywords, including the reserved ones of edition 2021.
+///
+/// A C name in this set does not parse as a Rust identifier, and the raw form
+/// is not available either: `r#crate`, `r#self` and `r#super` are rejected.
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
+    "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "if", "impl", "in",
+    "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "union", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
+/// Refuse a C name that is a Rust keyword.
+///
+/// Renaming would need the C name kept for the ABI and the Rust name kept in
+/// step across every use site; until that pass exists, a named refusal is
+/// better than Rust that does not parse.
+fn check_ident(name: &str) -> Result<(), String> {
+    if RUST_KEYWORDS.contains(&name) {
+        return Err(format!(
+            "`{name}` is a Rust keyword, so a C name that collides with one needs the M2 rename pass"
+        ));
+    }
+    Ok(())
+}
+
 fn append_record(
     program: &Program,
     record: &RecordDef,
     file: &mut RFile,
 ) -> Result<(), TranslateError> {
     let context = format!("record {}", record.name);
+    check_ident(&record.name).map_err(|message| TranslateError::new(&context, message))?;
     let mut fields = Vec::with_capacity(record.fields.len());
     for field in &record.fields {
+        check_ident(&field.name).map_err(|message| TranslateError::new(&context, message))?;
         fields.push((
             field.name.clone(),
             type_name(program, field.ty)
@@ -122,6 +152,7 @@ fn append_global(
     global: &Global,
     file: &mut RFile,
 ) -> Result<(), TranslateError> {
+    check_ident(&global.name).map_err(|message| TranslateError::new(&global.name, message))?;
     if !global.is_const {
         return Err(TranslateError::new(
             &global.name,
@@ -284,12 +315,10 @@ impl<'a> Translator<'a> {
                 .name
                 .clone()
                 .ok_or_else(|| self.error("a parameter has no name"))?;
+            check_ident(&name).map_err(|message| self.error(message))?;
             if self.slice_by_length(&name).is_some() {
-                if self.length_parameter_is_used(source, &name) {
-                    return Err(self.error(format!(
-                        "slice length {name} is used as a value; M1 only supports `len()`"
-                    )));
-                }
+                // The length is not an argument: every use of it lowers to
+                // `{slice}.len()`, whether or not the body mentions it.
                 continue;
             }
             if let Some(plan) = self.slice_by_pointer(&name) {
@@ -614,6 +643,7 @@ impl<'a> Translator<'a> {
     }
 
     fn decl(&self, name: &str, ty: TypeId, init: Option<&Expr>) -> Result<RStmt, TranslateError> {
+        check_ident(name).map_err(|message| self.error(message))?;
         let rust_ty = self.rust_type(ty)?;
         let init = match init {
             Some(init) => Some(self.reborrow(self.value(init, ty)?, ty)),
@@ -678,6 +708,14 @@ impl<'a> Translator<'a> {
     }
 
     fn assign_statement(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Result<RStmt, TranslateError> {
+        if let Some(name) = root_local(lhs) {
+            if let Some(plan) = self.slice_by_length(name) {
+                return Err(self.error(format!(
+                    "{name} is the length of slice {}; assigning it needs the M2 extent facts",
+                    plan.pointer
+                )));
+            }
+        }
         if op == "<<=" || op == ">>=" {
             // The same shift the binary form lowers, so an out-of-range count
             // keeps its UB-007 panic instead of wrapping silently.
@@ -898,6 +936,7 @@ impl<'a> Translator<'a> {
                     }
                 };
                 let mut lowered = Vec::with_capacity(args.len());
+                let mut mutable_roots = BTreeSet::new();
                 for (index, arg) in args.iter().enumerate() {
                     if group.as_ref().is_some_and(|group| group.length == index) {
                         // The callee takes the slice itself; its length is the
@@ -905,6 +944,25 @@ impl<'a> Translator<'a> {
                         continue;
                     }
                     let expected = parameters.get(index).copied().unwrap_or(arg.ty);
+                    // C lets one object reach a call twice, once per pointer
+                    // parameter, and the callee may write through either. Rust
+                    // refuses the second mutable borrow, so the call is
+                    // refused rather than emitted as code that does not build.
+                    if matches!(
+                        self.program.types.canonical(expected),
+                        Some(Type::Pointer {
+                            is_const: false,
+                            ..
+                        })
+                    ) {
+                        if let Some(root) = mutable_root(arg) {
+                            if !mutable_roots.insert(root.clone()) {
+                                return Err(self.error(format!(
+                                    "{root} is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed"
+                                )));
+                            }
+                        }
+                    }
                     if group
                         .as_ref()
                         .is_some_and(|group| group.contains_pointer(index))
@@ -1397,10 +1455,6 @@ impl<'a> Translator<'a> {
         self.slices.iter().find(|plan| plan.length == name)
     }
 
-    fn length_parameter_is_used(&self, block: &Block, name: &str) -> bool {
-        !uses_local(block, name)
-    }
-
     fn error(&self, message: impl Into<String>) -> TranslateError {
         TranslateError::new(self.function, message)
     }
@@ -1780,6 +1834,16 @@ fn is_mutable_pointer_type(program: &Program, id: TypeId) -> bool {
 }
 
 /// The local whose storage an assignment writes through fields and indexes.
+/// The place a mutable borrow of `expr` would come from, for the aliasing
+/// check at a call: a pointer local, or the object behind `&`.
+fn mutable_root(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Local(name) => Some(name.clone()),
+        ExprKind::Unary { op, operand, .. } if op == "&" => root_local(operand).map(str::to_string),
+        _ => root_local(expr).map(str::to_string),
+    }
+}
+
 fn root_local(expr: &Expr) -> Option<&str> {
     match &expr.kind {
         ExprKind::Local(name) => Some(name),
@@ -1845,80 +1909,6 @@ fn stmt_has_continue(stmt: &Stmt) -> bool {
         | StmtKind::Return(_)
         | StmtKind::Break
         | StmtKind::Empty => false,
-    }
-}
-
-fn uses_local(block: &Block, name: &str) -> bool {
-    block.stmts.iter().any(|stmt| stmt_uses_local(stmt, name))
-}
-
-fn stmt_uses_local(stmt: &Stmt, name: &str) -> bool {
-    match &stmt.kind {
-        StmtKind::Decl { init, .. } => init.as_ref().is_some_and(|e| expr_uses_local(e, name)),
-        StmtKind::Expr(expr) => expr_uses_local(expr, name),
-        StmtKind::If {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            expr_uses_local(cond, name)
-                || uses_local(then_branch, name)
-                || else_branch.as_ref().is_some_and(|b| uses_local(b, name))
-        }
-        StmtKind::While { cond, body } => expr_uses_local(cond, name) || uses_local(body, name),
-        StmtKind::For {
-            init,
-            cond,
-            step,
-            body,
-        } => {
-            init.as_ref().is_some_and(|s| stmt_uses_local(s, name))
-                || cond.as_ref().is_some_and(|e| expr_uses_local(e, name))
-                || step.as_ref().is_some_and(|e| expr_uses_local(e, name))
-                || uses_local(body, name)
-        }
-        StmtKind::DoWhile { body, cond } => uses_local(body, name) || expr_uses_local(cond, name),
-        StmtKind::Switch { scrutinee, cases } => {
-            expr_uses_local(scrutinee, name)
-                || cases.iter().any(|case| uses_local(&case.body, name))
-        }
-        StmtKind::Return(Some(value)) => expr_uses_local(value, name),
-        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Empty => false,
-    }
-}
-
-fn expr_uses_local(expr: &Expr, name: &str) -> bool {
-    match &expr.kind {
-        ExprKind::Local(other) => other == name,
-        ExprKind::Unary { operand, .. } => expr_uses_local(operand, name),
-        ExprKind::Binary { lhs, rhs, .. }
-        | ExprKind::Assign { lhs, rhs, .. }
-        | ExprKind::Index {
-            base: lhs,
-            index: rhs,
-        } => expr_uses_local(lhs, name) || expr_uses_local(rhs, name),
-        ExprKind::Member { base, .. } => expr_uses_local(base, name),
-        ExprKind::Cond {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            expr_uses_local(cond, name)
-                || expr_uses_local(then_branch, name)
-                || expr_uses_local(else_branch, name)
-        }
-        ExprKind::InitList(elems) => elems.iter().any(|e| expr_uses_local(e, name)),
-        ExprKind::Call { args, .. } => args.iter().any(|e| expr_uses_local(e, name)),
-        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => expr_uses_local(expr, name),
-        ExprKind::IntLit(_)
-        | ExprKind::FloatLit(_)
-        | ExprKind::StringLit(_)
-        | ExprKind::CharLit(_)
-        | ExprKind::BoolLit(_)
-        | ExprKind::Null
-        | ExprKind::Global(_)
-        | ExprKind::EnumConst { .. }
-        | ExprKind::Unsupported(_) => false,
     }
 }
 

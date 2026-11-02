@@ -135,6 +135,38 @@ void set(int v) { g = v; }
 C
 expect_refusal mut_global "mutable file-scope variables need the T1 ownership model"
 
+snippet param_reassign <<'C'
+int f(int *p, int *q) { p = q; return *p; }
+C
+expect_refusal param_reassign "p is a pointer parameter; assigning it another pointer needs the M2 ownership model"
+
+# The signature rule makes `out` part of a slice group, and `*out` reads it as
+# one object; the two readings cannot both hold.
+snippet slice_deref <<'C'
+#include <stddef.h>
+void set(int *out, const int *a, size_t n) { *out = a[0]; }
+C
+expect_refusal slice_deref 'out is a slice parameter, so `*out` reads it as one object; the M2 extent facts are needed'
+
+# The length is not an argument, so there is no local to assign to; changing
+# it means changing the slice's extent.
+snippet len_assign <<'C'
+#include <stddef.h>
+void f(const int *a, size_t n) { n = 1; }
+C
+expect_refusal len_assign 'n is the length of slice a; assigning it needs the M2 extent facts'
+
+snippet keyword_name <<'C'
+int use(int x) { return x + 1; }
+C
+expect_refusal keyword_name '`use` is a Rust keyword, so a C name that collides with one needs the M2 rename pass'
+
+snippet alias_mutable <<'C'
+int both(int *a, int *b) { *a = 1; *b = 2; return *a + *b; }
+int f(int *p) { return both(p, p); }
+C
+expect_refusal alias_mutable 'p is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed'
+
 # A pointer parameter whose pointee is a record translates as a signature
 # (`p: &mut P`) but the V2 driver refuses to build a harness for it.
 snippet driver_record <<'C'
