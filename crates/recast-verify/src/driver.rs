@@ -211,19 +211,23 @@ pub(crate) fn arguments(
             .as_ref()
             .is_some_and(|group| group.contains_pointer(index))
         {
-            let (c, rust, len) = slice_argument(program, param.ty, value)?;
+            let slice = slice_argument(program, param.ty, value, index)?;
             if let Some(existing) = slice_len {
-                if existing != len {
+                if existing != slice.len {
                     return Err(Error::Case(format!(
                         "{} has two slices of different lengths",
                         function.name
                     )));
                 }
             } else {
-                slice_len = Some(len);
+                slice_len = Some(slice.len);
             }
-            arguments.c_args.push(c);
-            arguments.r_args.push(rust);
+            arguments.c_args.push(slice.c_arg);
+            arguments.r_args.push(slice.r_arg);
+            arguments.c_setup.extend(slice.c_setup);
+            arguments.r_setup.extend(slice.r_setup);
+            arguments.c_observed.extend(slice.c_observed);
+            arguments.r_observed.extend(slice.r_observed);
         } else if matches!(
             program.types.canonical(param.ty),
             Some(Type::Pointer { .. })
@@ -316,59 +320,190 @@ fn rust_scalar(program: &Program, id: TypeId) -> Option<String> {
     }
 }
 
+struct SliceArgument {
+    c_setup: Vec<String>,
+    r_setup: Vec<String>,
+    c_arg: String,
+    r_arg: String,
+    /// Printed after the call, for a slice the callee may write.
+    c_observed: Vec<String>,
+    r_observed: Vec<String>,
+    len: usize,
+}
+
+/// One slice argument. A `const T *` slice can be a compound literal, but a
+/// `T *` slice is `&mut [T]` in the generated Rust and has to be a place the
+/// driver owns, so it is declared and its elements are printed after the call.
 fn slice_argument(
     program: &Program,
     ty: TypeId,
     value: &Value,
-) -> Result<(String, String, usize), Error> {
-    let Some(Type::Pointer { pointee, .. }) = program.types.get(ty) else {
+    index: usize,
+) -> Result<SliceArgument, Error> {
+    let Some(Type::Pointer { pointee, is_const }) = program.types.get(ty) else {
         return Err(Error::Case("expected a pointer parameter".to_string()));
     };
     let element = c_element_type(program, *pointee);
+    let mut slice = SliceArgument {
+        c_setup: Vec::new(),
+        r_setup: Vec::new(),
+        c_arg: String::new(),
+        r_arg: String::new(),
+        c_observed: Vec::new(),
+        r_observed: Vec::new(),
+        len: 0,
+    };
     match value {
         Value::String(text) if matches!(program.types.get(*pointee), Some(Type::Char { .. })) => {
             let signed = matches!(
                 program.types.get(*pointee),
                 Some(Type::Char { signed: true })
             );
-            // A byte-string literal has type `&[u8; N]`. When the target has a
-            // signed `char`, the translated parameter is `&[i8]`, so the
-            // elements have to be spelled out instead of relying on the
-            // literal's element type.
-            let rust = if signed {
-                let values = text
-                    .as_bytes()
+            let bytes = text.as_bytes();
+            if *is_const {
+                // A byte-string literal has type `&[u8; N]`. When the target
+                // has a signed `char`, the translated parameter is `&[i8]`, so
+                // the elements have to be spelled out instead of relying on
+                // the literal's element type.
+                slice.r_arg = if signed {
+                    format!("&[{}]", byte_elements(bytes, "i8"))
+                } else {
+                    format!("b\"{}\"", escape_bytes(bytes))
+                };
+                slice.c_arg = format!("\"{}\"", escape_c(text));
+            } else {
+                let name = format!("a{index}");
+                let c_values = bytes
                     .iter()
-                    .map(|byte| format!("{}i8", *byte as i8))
+                    .map(|byte| u32::from(*byte).to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("&[{values}]")
-            } else {
-                format!("b\"{}\"", escape_bytes(text.as_bytes()))
-            };
-            Ok((format!("\"{}\"", escape_c(text)), rust, text.len()))
+                slice.c_setup.push(format!(
+                    "{element} {name}[{}] = {{{c_values}}}",
+                    bytes.len()
+                ));
+                slice.c_arg = name.clone();
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                let rust_values = if signed {
+                    byte_elements(bytes, "i8")
+                } else {
+                    bytes
+                        .iter()
+                        .map(|byte| format!("{byte}u8"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                slice.r_setup.push(format!(
+                    "let mut {name}: [{rust_element}; {}] = [{rust_values}]",
+                    bytes.len()
+                ));
+                slice.r_arg = format!("&mut {name}");
+            }
+            if !*is_const {
+                observe_elements(index, bytes.len(), &mut slice);
+            }
+            slice.len = bytes.len();
         }
         Value::Array(items) if items.is_empty() => {
-            Ok((format!("({element} *)0"), "&[]".to_string(), 0))
+            // C with no elements may pass a null pointer; `&mut []` is not a
+            // place, so the Rust side needs an empty array of its own.
+            slice.c_arg = format!("({element} *)0");
+            if *is_const {
+                slice.r_arg = "&[]".to_string();
+            } else {
+                let name = format!("a{index}");
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                slice
+                    .r_setup
+                    .push(format!("let mut {name}: [{rust_element}; 0] = []"));
+                slice.r_arg = format!("&mut {name}");
+            }
         }
         Value::Array(items) => {
-            let mut c_values = Vec::with_capacity(items.len());
-            let mut rust_values = Vec::with_capacity(items.len());
+            let mut numbers = Vec::with_capacity(items.len());
             for item in items {
-                let number = integer(item)?;
-                c_values.push(number.to_string());
-                rust_values.push(number.to_string());
+                numbers.push(integer(item)?);
             }
-            Ok((
-                format!("({element}[]){{{}}}", c_values.join(", ")),
-                format!("&[{}]", rust_values.join(", ")),
-                items.len(),
-            ))
+            if *is_const {
+                let c_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rust_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.c_arg = format!("({element}[]){{{c_values}}}");
+                slice.r_arg = format!("&[{rust_values}]");
+            } else {
+                let name = format!("a{index}");
+                let c_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.c_setup.push(format!(
+                    "{element} {name}[{}] = {{{c_values}}}",
+                    numbers.len()
+                ));
+                slice.c_arg = name.clone();
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                let rust_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.r_setup.push(format!(
+                    "let mut {name}: [{rust_element}; {}] = [{rust_values}]",
+                    numbers.len()
+                ));
+                slice.r_arg = format!("&mut {name}");
+            }
+            if !*is_const {
+                observe_elements(index, numbers.len(), &mut slice);
+            }
+            slice.len = numbers.len();
         }
-        _ => Err(Error::Case(format!(
-            "slice argument must be an array or string, found {value}"
-        ))),
+        _ => {
+            return Err(Error::Case(format!(
+                "slice argument must be an array or string, found {value}"
+            )))
+        }
     }
+    Ok(slice)
+}
+
+/// `a{index}[0]`, `a{index}[1]`, ... for a slice the callee may write.
+fn observe_elements(index: usize, len: usize, slice: &mut SliceArgument) {
+    for element in 0..len {
+        slice
+            .c_observed
+            .push(format!("(long long)(a{index}[{element}])"));
+        slice.r_observed.push(format!("a{index}[{element}] as i64"));
+    }
+}
+
+/// `97i8, 98i8, ...` for a byte array with explicit element types.
+fn byte_elements(bytes: &[u8], suffix: &str) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{}{suffix}", *byte as i8))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(String, String), Error> {
@@ -688,16 +823,48 @@ mod tests {
         let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
 
         let unsigned = pointer_to_char(&mut program, false);
-        let (c, rust, len) = slice_argument(&program, unsigned, &Value::String("hi".to_string()))
+        let slice = slice_argument(&program, unsigned, &Value::String("hi".to_string()), 0)
             .expect("unsigned string argument");
-        assert_eq!(c, "\"hi\"");
-        assert_eq!(rust, "b\"hi\"");
-        assert_eq!(len, 2);
+        assert_eq!(slice.c_arg, "\"hi\"");
+        assert_eq!(slice.r_arg, "b\"hi\"");
+        assert_eq!(slice.len, 2);
+        assert!(slice.c_setup.is_empty(), "a const slice needs no place");
 
         let signed = pointer_to_char(&mut program, true);
-        let (_, rust, len) = slice_argument(&program, signed, &Value::String("hi".to_string()))
+        let slice = slice_argument(&program, signed, &Value::String("hi".to_string()), 0)
             .expect("signed string argument");
-        assert_eq!(rust, "&[104i8, 105i8]");
-        assert_eq!(len, 2);
+        assert_eq!(slice.r_arg, "&[104i8, 105i8]");
+        assert_eq!(slice.len, 2);
+    }
+
+    #[test]
+    fn a_mutable_slice_argument_gets_a_place_and_is_observed() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let mutable = program.types.intern(Type::Pointer {
+            pointee: int,
+            is_const: false,
+        });
+        let slice = slice_argument(&program, mutable, &serde_json::json!([1, 2]), 3)
+            .expect("mutable slice argument");
+        assert_eq!(slice.c_setup, vec!["int a3[2] = {1, 2}".to_string()]);
+        assert_eq!(slice.c_arg, "a3");
+        assert_eq!(
+            slice.r_setup,
+            vec!["let mut a3: [i32; 2] = [1, 2]".to_string()]
+        );
+        assert_eq!(slice.r_arg, "&mut a3");
+        assert_eq!(
+            slice.c_observed,
+            vec![
+                "(long long)(a3[0])".to_string(),
+                "(long long)(a3[1])".to_string()
+            ]
+        );
+        assert_eq!(slice.r_observed, vec!["a3[0] as i64", "a3[1] as i64"]);
     }
 }

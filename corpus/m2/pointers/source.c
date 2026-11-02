@@ -42,3 +42,18 @@ int total(int n) {
     int *p = &n;
     return *p + n;
 }
+
+/* A mutable slice: the callee writes through every element. */
+void fill(int *out, const int *a, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = a[i] * 2;
+    }
+}
+
+void upper(char *s, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] >= 'a' && s[i] <= 'z') {
+            s[i] = s[i] - 32;
+        }
+    }
+}
