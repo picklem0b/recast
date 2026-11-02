@@ -877,23 +877,10 @@ impl<'a> Translator<'a> {
             ExprKind::Assign { .. } => {
                 Err(self.error("an assignment used as a value is not supported"))
             }
-            ExprKind::Index { base, index } => {
-                let base = self.index_base(base)?;
-                let lowered = self.value(index, index.ty)?;
-                let index_type = self.rust_type(index.ty)?;
-                let index = if index_type == "usize" {
-                    lowered
-                } else {
-                    RExpr::Cast {
-                        expr: Box::new(lowered),
-                        ty: "usize".to_string(),
-                    }
-                };
-                Ok(RExpr::Index {
-                    base: Box::new(base),
-                    index: Box::new(index),
-                })
-            }
+            ExprKind::Index { base, index } => Ok(RExpr::Index {
+                base: Box::new(self.index_base(base)?),
+                index: Box::new(self.index_value(index)?),
+            }),
             ExprKind::Member { base, field, arrow } => {
                 if *arrow {
                     return Err(self.error(
@@ -963,11 +950,13 @@ impl<'a> Translator<'a> {
                             }
                         }
                     }
-                    if group
-                        .as_ref()
-                        .is_some_and(|group| group.contains_pointer(index))
+                    if let Some(group) =
+                        group.as_ref().filter(|group| group.contains_pointer(index))
                     {
-                        lowered.push(self.slice_reference(arg, expected)?);
+                        // The callee's slice is exactly its length argument: a
+                        // call may pass an array longer than the count, and C
+                        // reads only the first `n` elements.
+                        lowered.push(self.slice_reference(arg, expected, &args[group.length])?);
                         continue;
                     }
                     if let Some(decayed) = self.decayed_reference(arg, expected)? {
@@ -1330,6 +1319,18 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// A value used as an index, coerced to `usize`.
+    fn index_value(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
+        let lowered = self.value(expr, expr.ty)?;
+        if self.rust_type(expr.ty)? == "usize" {
+            return Ok(lowered);
+        }
+        Ok(RExpr::Cast {
+            expr: Box::new(lowered),
+            ty: "usize".to_string(),
+        })
+    }
+
     fn rust_type(&self, id: TypeId) -> Result<String, TranslateError> {
         match self.program.types.get(id) {
             // A pointer to one object is a reference. The slice pair is
@@ -1361,23 +1362,83 @@ impl<'a> Translator<'a> {
         )
     }
 
-    fn slice_reference(&self, arg: &Expr, expected: TypeId) -> Result<RExpr, TranslateError> {
+    /// The Rust form of a C slice argument: the borrow of `arg`, bounded by
+    /// the call's length argument.
+    ///
+    /// A callee taking `(const T *a, size_t n)` reads `n` elements wherever
+    /// they start, so `sum(a, 2)` on a three-element array is `&a[..2]`, and
+    /// `sum(&a[1], 2)` is `&a[1..][..2]`. Passing the whole array would hand
+    /// the callee a longer slice than the C call did.
+    fn slice_reference(
+        &self,
+        arg: &Expr,
+        expected: TypeId,
+        len: &Expr,
+    ) -> Result<RExpr, TranslateError> {
         let inner = unwrap_casts(arg);
+        let op = if self.is_mutable_pointer(expected) {
+            "&mut"
+        } else {
+            "&"
+        };
+        let length = Box::new(self.index_value(len)?);
         if matches!(
             self.program.types.canonical(inner.ty),
             Some(Type::Array { .. })
         ) {
-            let op = if self.is_mutable_pointer(expected) {
-                "&mut"
-            } else {
-                "&"
-            };
             return Ok(RExpr::Unary {
                 op,
-                expr: Box::new(self.expr(inner)?),
+                expr: Box::new(RExpr::Index {
+                    base: Box::new(self.expr(inner)?),
+                    index: Box::new(RExpr::Range {
+                        start: None,
+                        end: Some(length),
+                    }),
+                }),
             });
         }
-        self.value(arg, expected)
+        // `&a[i]` is C's way of starting at element `i`; slicing the rest and
+        // then the first `n` elements evaluates `i` once.
+        if let ExprKind::Unary {
+            op: unary_op,
+            operand,
+            ..
+        } = &inner.kind
+        {
+            if unary_op == "&" {
+                if let ExprKind::Index { base, index } = &unwrap_casts(operand).kind {
+                    return Ok(RExpr::Unary {
+                        op,
+                        expr: Box::new(RExpr::Index {
+                            base: Box::new(RExpr::Index {
+                                base: Box::new(self.index_base(base)?),
+                                index: Box::new(RExpr::Range {
+                                    start: Some(Box::new(self.index_value(index)?)),
+                                    end: None,
+                                }),
+                            }),
+                            index: Box::new(RExpr::Range {
+                                start: None,
+                                end: Some(length),
+                            }),
+                        }),
+                    });
+                }
+            }
+        }
+        // A pointer parameter is already a slice; it still has to be
+        // narrowed to the count this call passes.
+        let slice = self.value(arg, expected)?;
+        Ok(RExpr::Unary {
+            op,
+            expr: Box::new(RExpr::Index {
+                base: Box::new(slice),
+                index: Box::new(RExpr::Range {
+                    start: None,
+                    end: Some(length),
+                }),
+            }),
+        })
     }
 
     fn decayed_reference(

@@ -45,3 +45,23 @@ int first_or(const int *a, size_t n) {
     }
     return a[0];
 }
+
+long head(const int *a, size_t n) {
+    long total = 0;
+    for (size_t i = 0; i < n; i++) {
+        total += a[i];
+    }
+    return total;
+}
+
+/* A call may pass fewer elements than the array holds. */
+long short_call(void) {
+    int a[4] = {10, 20, 30, 40};
+    return head(a, 2);
+}
+
+/* And it may start in the middle of one. */
+long offset_call(void) {
+    int a[4] = {10, 20, 30, 40};
+    return head(&a[1], 2);
+}

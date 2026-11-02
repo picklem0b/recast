@@ -127,6 +127,14 @@
           8
         ]
       ]
+    },
+    {
+      "function": "short_call",
+      "args": []
+    },
+    {
+      "function": "offset_call",
+      "args": []
     }
   ]
 }

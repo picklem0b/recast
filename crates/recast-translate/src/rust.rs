@@ -35,6 +35,11 @@ pub enum Expr {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// A range inside an index, `a[..n]` or `a[i..]`.
+    Range {
+        start: Option<Box<Expr>>,
+        end: Option<Box<Expr>>,
+    },
     Field {
         base: Box<Expr>,
         field: String,
@@ -171,6 +176,15 @@ impl Expr {
             Expr::Field { base, field } => {
                 out.push_str(&base.wrapped(12));
                 let _ = write!(out, ".{field}");
+            }
+            Expr::Range { start, end } => {
+                if let Some(start) = start {
+                    out.push_str(&start.wrapped(0));
+                }
+                out.push_str("..");
+                if let Some(end) = end {
+                    out.push_str(&end.wrapped(0));
+                }
             }
             Expr::Call { callee, args } => {
                 out.push_str(&callee.wrapped(12));
@@ -613,6 +627,34 @@ impl Stmt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slice_range_renders_inside_its_index() {
+        let tail = Expr::Index {
+            base: Box::new(Expr::Path("a".into())),
+            index: Box::new(Expr::Range {
+                start: Some(Box::new(Expr::Path("i".into()))),
+                end: None,
+            }),
+        };
+        assert_eq!(tail.render_to_string(), "a[i..]");
+        let head = Expr::Index {
+            base: Box::new(Expr::Path("a".into())),
+            index: Box::new(Expr::Range {
+                start: None,
+                end: Some(Box::new(Expr::Path("n".into()))),
+            }),
+        };
+        assert_eq!(head.render_to_string(), "a[..n]");
+        let both = Expr::Index {
+            base: Box::new(tail),
+            index: Box::new(Expr::Range {
+                start: None,
+                end: Some(Box::new(Expr::int(2))),
+            }),
+        };
+        assert_eq!(both.render_to_string(), "a[i..][..2]");
+    }
 
     #[test]
     fn precedence_keeps_the_tree_meaning() {
