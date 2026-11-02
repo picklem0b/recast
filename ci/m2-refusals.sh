@@ -161,6 +161,34 @@ int use(int x) { return x + 1; }
 C
 expect_refusal keyword_name '`use` is a Rust keyword, so a C name that collides with one needs the M2 rename pass'
 
+# The pairing rule sees one length directly after a run of pointers. A second
+# pair, a length before its pointer, and a length separated by another scalar
+# are outside it, and the message names which shape was found.
+snippet second_pair <<'C'
+#include <stddef.h>
+long sum2(const int *a, size_t n, const int *b, size_t m) {
+    long t = 0;
+    for (size_t i = 0; i < n; i++) t += a[i];
+    for (size_t i = 0; i < m; i++) t += b[i];
+    return t;
+}
+C
+expect_refusal second_pair "a second (pointer, length) pair needs the M2 extent analysis"
+
+snippet length_before_pointer <<'C'
+#include <stddef.h>
+int head(size_t n, const int *a) { return n == 0 ? -1 : a[0]; }
+C
+expect_refusal length_before_pointer "a length before its pointer needs the M2 extent analysis"
+
+snippet length_not_adjacent <<'C'
+#include <stddef.h>
+void fill(int *out, int v, size_t n) {
+    for (size_t i = 0; i < n; i++) out[i] = v;
+}
+C
+expect_refusal length_not_adjacent "a length that does not immediately follow its pointer needs the M2 extent analysis"
+
 snippet alias_mutable <<'C'
 int both(int *a, int *b) { *a = 1; *b = 2; return *a + *b; }
 int f(int *p) { return both(p, p); }

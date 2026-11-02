@@ -20,8 +20,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use recast_ir::{
-    slice_group, Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage, Program,
-    RecordDef, Stmt, StmtKind, Type, TypeId,
+    is_size_t, slice_group, Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage,
+    Program, RecordDef, Stmt, StmtKind, Type, TypeId,
 };
 use rust::{
     Expr as RExpr, File as RFile, Fn as RFn, Item as RItem, MatchArm, Pattern, Stmt as RStmt,
@@ -1286,9 +1286,13 @@ impl<'a> Translator<'a> {
                 ) {
                     return Ok(RExpr::Path(name.clone()));
                 }
-                Err(self.error(format!(
-                    "indexing {name} is only supported for arrays and slice parameters"
-                )))
+                let mut message =
+                    format!("indexing {name} is only supported for arrays and slice parameters");
+                if let Some(reason) = self.unpaired_length(name) {
+                    message.push_str("; ");
+                    message.push_str(&reason);
+                }
+                Err(self.error(message))
             }
             ExprKind::Member { base, field, arrow } => {
                 if *arrow {
@@ -1506,6 +1510,35 @@ impl<'a> Translator<'a> {
             }
             _ => Err(self.error("shift operands must be integers")),
         }
+    }
+
+    /// Why a pointer parameter was not paired with a length, when it has one:
+    /// only the parameters before the first `size_t` form a slice group.
+    fn unpaired_length(&self, name: &str) -> Option<String> {
+        let function = self.program.function_named(self.function)?;
+        let params = &function.signature.params;
+        let index = params
+            .iter()
+            .position(|param| param.name.as_deref() == Some(name))?;
+        if let Some(length) = params[index + 1..]
+            .iter()
+            .position(|param| is_size_t(self.program, param.ty))
+        {
+            // The pair is adjacent exactly when the next parameter is the length.
+            return Some(if length == 0 {
+                "a second (pointer, length) pair needs the M2 extent analysis".to_string()
+            } else {
+                "a length that does not immediately follow its pointer needs the M2 extent analysis"
+                    .to_string()
+            });
+        }
+        if params[..index]
+            .iter()
+            .any(|param| is_size_t(self.program, param.ty))
+        {
+            return Some("a length before its pointer needs the M2 extent analysis".to_string());
+        }
+        None
     }
 
     fn slice_by_pointer(&self, name: &str) -> Option<&SlicePlan> {
