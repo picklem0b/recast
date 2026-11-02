@@ -217,3 +217,9 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.4`             | M2: `ci/m2-refusals.sh` checks the refusal list.                         |
 | `v1.2.5`             | M2: the audit records the pointer step.                                  |
 | `v1.1.30`            | M1 audit: the tag lists include `v1.1.29`.                               |
+| `v1.2.6`             | M2 repair: reborrow at a call, refuse a parameter reassignment.          |
+| `v1.2.7`             | M2 repair: a slice call drops the length argument.                       |
+| `v1.2.8`             | M2 repair: an array argument decays at the call.                         |
+| `v1.2.9`             | M2 repair: a slice parameter read as one object is refused.              |
+| `v1.2.10`            | M2 repair: slice length, keyword names and aliased mutable calls.        |
+| `v1.2.11`            | M2 audit: the tag lists include `v1.2.10`.                               |
