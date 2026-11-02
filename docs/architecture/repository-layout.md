@@ -228,3 +228,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.14`            | M2 audit: the tag lists include `v1.2.13`.                               |
 | `v1.2.15`            | M2 repair: a later slice is narrowed to the call's count.                |
 | `v1.2.16`            | M2 audit: the tag lists include `v1.2.15`.                               |
+| `v1.2.17`            | M2 repair: an unpaired length is refused with the shape found.           |
