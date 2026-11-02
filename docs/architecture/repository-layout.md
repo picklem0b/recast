@@ -223,3 +223,6 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.9`             | M2 repair: a slice parameter read as one object is refused.              |
 | `v1.2.10`            | M2 repair: slice length, keyword names and aliased mutable calls.        |
 | `v1.2.11`            | M2 audit: the tag lists include `v1.2.10`.                               |
+| `v1.2.12`            | M2 repair: a slice call carries its length.                              |
+| `v1.2.13`            | M2 repair: a mutable slice argument is a place the driver owns.          |
+| `v1.2.14`            | M2 audit: the tag lists include `v1.2.13`.                               |
