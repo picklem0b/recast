@@ -15,7 +15,7 @@
 
 pub mod rust;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -175,6 +175,7 @@ fn append_global(
         assigned: BTreeSet::new(),
         params: BTreeSet::new(),
         slices: Vec::new(),
+        borrowed: RefCell::new(BTreeSet::new()),
     };
     let value = translator.value(init, global.ty)?;
     file.items.push(RItem::Const {
@@ -240,6 +241,10 @@ struct Translator<'a> {
     assigned: BTreeSet<String>,
     params: BTreeSet<String>,
     slices: Vec<SlicePlan>,
+    /// Root places a mutable pointer local borrows. Rust allows one live
+    /// `&mut` per place, so a second borrow or a write through the place is
+    /// refused rather than emitted as borrow-checker errors.
+    borrowed: RefCell<BTreeSet<String>>,
     /// Serial for generated labels, so two nested loops cannot shadow another
     /// loop's label.
     labels: Cell<u32>,
@@ -292,6 +297,7 @@ impl<'a> Translator<'a> {
             assigned,
             params,
             slices,
+            borrowed: RefCell::new(BTreeSet::new()),
             labels: Cell::new(0),
         })
     }
@@ -644,6 +650,11 @@ impl<'a> Translator<'a> {
 
     fn decl(&self, name: &str, ty: TypeId, init: Option<&Expr>) -> Result<RStmt, TranslateError> {
         check_ident(name).map_err(|message| self.error(message))?;
+        if self.is_mutable_pointer(ty) {
+            if let Some(init) = init {
+                self.track_borrow(init)?;
+            }
+        }
         let rust_ty = self.rust_type(ty)?;
         let init = match init {
             Some(init) => Some(self.reborrow(self.value(init, ty)?, ty)),
@@ -679,6 +690,13 @@ impl<'a> Translator<'a> {
                 operand,
                 postfix: _,
             } if op == "++" || op == "--" => {
+                if let Some(name) = root_local(operand) {
+                    if self.borrowed.borrow().contains(name) {
+                        return Err(self.error(format!(
+                            "{name} is updated while a mutable pointer borrows it; the M2 ownership model is needed"
+                        )));
+                    }
+                }
                 let target = self.expr(operand)?;
                 let step = if op == "++" {
                     "wrapping_add"
@@ -708,6 +726,16 @@ impl<'a> Translator<'a> {
     }
 
     fn assign_statement(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Result<RStmt, TranslateError> {
+        if let Some(name) = root_local(lhs) {
+            if self.borrowed.borrow().contains(name) {
+                return Err(self.error(format!(
+                    "{name} is assigned while a mutable pointer borrows it; the M2 ownership model is needed"
+                )));
+            }
+        }
+        if self.is_mutable_pointer(lhs.ty) && op == "=" {
+            self.track_borrow(rhs)?;
+        }
         if let Some(name) = root_local(lhs) {
             if let Some(plan) = self.slice_by_length(name) {
                 return Err(self.error(format!(
@@ -1341,6 +1369,12 @@ impl<'a> Translator<'a> {
             // handled before this point, so reaching here means no length
             // follows and the pointee is a single value.
             Some(Type::Pointer { pointee, is_const }) => {
+                if matches!(
+                    self.program.types.canonical(*pointee),
+                    Some(Type::Pointer { .. })
+                ) {
+                    return Err(self.error("a pointer to a pointer needs the M2 ownership model"));
+                }
                 let element =
                     type_name(self.program, *pointee).map_err(|message| self.error(message))?;
                 Ok(format!(
@@ -1477,6 +1511,43 @@ impl<'a> Translator<'a> {
     /// Copying a pointer in C does not consume it. A Rust `&mut` is moved when
     /// it is passed or assigned, so a place that already holds one is
     /// reborrowed and the holder keeps its pointer for the next use.
+    /// Record that a mutable pointer local borrows a place, and refuse a
+    /// second borrow of the same place.
+    ///
+    /// Rust allows one live `&mut` per place; C does not count. The two ways a
+    /// pointer local comes to hold one are `&x` and a copy of another pointer,
+    /// which lowers to `&mut *p`.
+    fn track_borrow(&self, init: &Expr) -> Result<(), TranslateError> {
+        let inner = unwrap_casts(init);
+        if let ExprKind::Unary { op, operand, .. } = &inner.kind {
+            if op == "&" {
+                if let Some(root) = root_local(operand) {
+                    if !self.borrowed.borrow_mut().insert(root.to_string()) {
+                        return Err(self.error(format!(
+                            "{root} is borrowed as a mutable pointer twice; the M2 ownership model is needed"
+                        )));
+                    }
+                }
+                return Ok(());
+            }
+        }
+        if !matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Pointer { .. })
+        ) {
+            return Ok(());
+        }
+        if let ExprKind::Local(name) = &inner.kind {
+            let key = format!("*{name}");
+            if !self.borrowed.borrow_mut().insert(key) {
+                return Err(self.error(format!(
+                    "{name} is reborrowed as a mutable pointer twice; the M2 ownership model is needed"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn reborrow(&self, value: RExpr, ty: TypeId) -> RExpr {
         if self.is_mutable_pointer(ty)
             && matches!(
@@ -1600,7 +1671,7 @@ fn type_name(program: &Program, id: TypeId) -> Result<String, String> {
             }
         }
         Some(Type::Pointer { .. }) => Err(
-            "a pointer type is only translated as a slice with a following size_t parameter"
+            "a pointer in this position (a field, an array element or a return type) needs the M2 ownership model"
                 .to_string(),
         ),
         Some(Type::Unknown { spelling }) => Err(format!("unknown type {spelling}")),

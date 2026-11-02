@@ -161,6 +161,34 @@ int use(int x) { return x + 1; }
 C
 expect_refusal keyword_name '`use` is a Rust keyword, so a C name that collides with one needs the M2 rename pass'
 
+# Rust allows one live `&mut` per place; C lets two pointers name one object.
+# A second mutable borrow, a write through the borrowed place, and an update
+# of it are refused, because the generated Rust would not type-check.
+snippet two_borrows <<'C'
+int f(void) { int x = 1; int *p = &x; int *q = &x; *p = 2; return *q; }
+C
+expect_refusal two_borrows "x is borrowed as a mutable pointer twice; the M2 ownership model is needed"
+
+snippet borrowed_write <<'C'
+int f(void) { int x = 1; int *p = &x; x = 2; return *p; }
+C
+expect_refusal borrowed_write "x is assigned while a mutable pointer borrows it; the M2 ownership model is needed"
+
+snippet double_reborrow <<'C'
+int f(int *p) { int *q = p; int *r = p; *q = 1; return *r; }
+C
+expect_refusal double_reborrow "p is reborrowed as a mutable pointer twice; the M2 ownership model is needed"
+
+snippet borrowed_update <<'C'
+int f(void) { int x = 1; int *p = &x; x++; return *p; }
+C
+expect_refusal borrowed_update "x is updated while a mutable pointer borrows it; the M2 ownership model is needed"
+
+snippet pointer_to_pointer <<'C'
+int f(int **pp) { return **pp; }
+C
+expect_refusal pointer_to_pointer "a pointer to a pointer needs the M2 ownership model"
+
 # The pairing rule sees one length directly after a run of pointers. A second
 # pair, a length before its pointer, and a length separated by another scalar
 # are outside it, and the message names which shape was found.
