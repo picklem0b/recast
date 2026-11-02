@@ -364,7 +364,26 @@ fn slice_argument(
                 Some(Type::Char { signed: true })
             );
             let bytes = text.as_bytes();
-            if *is_const {
+            if bytes.is_empty() {
+                // A zero-length array is a compiler extension in C; no elements
+                // is the null pointer with a count of zero, as for any slice.
+                slice.c_arg = format!("({element} *)0");
+                if *is_const {
+                    slice.r_arg = "&[]".to_string();
+                } else {
+                    let name = format!("a{index}");
+                    let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                        Error::Unsupported(
+                            "a slice element the driver cannot spell is the next M2 step"
+                                .to_string(),
+                        )
+                    })?;
+                    slice
+                        .r_setup
+                        .push(format!("let mut {name}: [{rust_element}; 0] = []"));
+                    slice.r_arg = format!("&mut {name}");
+                }
+            } else if *is_const {
                 // A byte-string literal has type `&[u8; N]`. When the target
                 // has a signed `char`, the translated parameter is `&[i8]`, so
                 // the elements have to be spelled out instead of relying on
