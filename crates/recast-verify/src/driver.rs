@@ -211,12 +211,15 @@ pub(crate) fn arguments(
             .as_ref()
             .is_some_and(|group| group.contains_pointer(index))
         {
-            let slice = slice_argument(program, param.ty, value, index)?;
+            let slice = slice_argument(program, param.ty, value, index, slice_len)?;
+            // The call passes one length for every slice: the first slice's.
+            // C reads that many elements from each, so a later slice may be
+            // longer (the callee sees fewer than it holds) but not shorter.
             if let Some(existing) = slice_len {
-                if existing != slice.len {
+                if slice.len < existing {
                     return Err(Error::Case(format!(
-                        "{} has two slices of different lengths",
-                        function.name
+                        "{} passes {existing} elements but a later slice holds {}",
+                        function.name, slice.len
                     )));
                 }
             } else {
@@ -339,6 +342,7 @@ fn slice_argument(
     ty: TypeId,
     value: &Value,
     index: usize,
+    limit: Option<usize>,
 ) -> Result<SliceArgument, Error> {
     let Some(Type::Pointer { pointee, is_const }) = program.types.get(ty) else {
         return Err(Error::Case("expected a pointer parameter".to_string()));
@@ -483,6 +487,22 @@ fn slice_argument(
                 "slice argument must be an array or string, found {value}"
             )))
         }
+    }
+    // A later slice may hold more elements than the call's length; the
+    // callee still sees exactly the length, as C's count says.
+    if let Some(limit) = limit.filter(|limit| *limit < slice.len) {
+        let borrow = if slice.r_arg.starts_with("&mut ") {
+            "&mut "
+        } else {
+            "&"
+        };
+        let place = slice
+            .r_arg
+            .strip_prefix("&mut ")
+            .or_else(|| slice.r_arg.strip_prefix('&'))
+            .unwrap_or(&slice.r_arg)
+            .to_string();
+        slice.r_arg = format!("{borrow}{place}[..{limit}]");
     }
     Ok(slice)
 }
@@ -823,15 +843,21 @@ mod tests {
         let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
 
         let unsigned = pointer_to_char(&mut program, false);
-        let slice = slice_argument(&program, unsigned, &Value::String("hi".to_string()), 0)
-            .expect("unsigned string argument");
+        let slice = slice_argument(
+            &program,
+            unsigned,
+            &Value::String("hi".to_string()),
+            0,
+            None,
+        )
+        .expect("unsigned string argument");
         assert_eq!(slice.c_arg, "\"hi\"");
         assert_eq!(slice.r_arg, "b\"hi\"");
         assert_eq!(slice.len, 2);
         assert!(slice.c_setup.is_empty(), "a const slice needs no place");
 
         let signed = pointer_to_char(&mut program, true);
-        let slice = slice_argument(&program, signed, &Value::String("hi".to_string()), 0)
+        let slice = slice_argument(&program, signed, &Value::String("hi".to_string()), 0, None)
             .expect("signed string argument");
         assert_eq!(slice.r_arg, "&[104i8, 105i8]");
         assert_eq!(slice.len, 2);
@@ -849,7 +875,7 @@ mod tests {
             pointee: int,
             is_const: false,
         });
-        let slice = slice_argument(&program, mutable, &serde_json::json!([1, 2]), 3)
+        let slice = slice_argument(&program, mutable, &serde_json::json!([1, 2]), 3, None)
             .expect("mutable slice argument");
         assert_eq!(slice.c_setup, vec!["int a3[2] = {1, 2}".to_string()]);
         assert_eq!(slice.c_arg, "a3");
@@ -866,5 +892,31 @@ mod tests {
             ]
         );
         assert_eq!(slice.r_observed, vec!["a3[0] as i64", "a3[1] as i64"]);
+    }
+
+    #[test]
+    fn a_slice_longer_than_the_call_is_narrowed() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let shared = program.types.intern(Type::Pointer {
+            pointee: int,
+            is_const: true,
+        });
+        let slice = slice_argument(
+            &program,
+            shared,
+            &serde_json::json!([1, 2, 3, 4]),
+            0,
+            Some(2),
+        )
+        .expect("a longer slice");
+        // The C call passes two elements; the array still holds four.
+        assert_eq!(slice.c_arg, "(int[]){1, 2, 3, 4}");
+        assert_eq!(slice.r_arg, "&[1, 2, 3, 4][..2]");
+        assert_eq!(slice.len, 4);
     }
 }
