@@ -232,3 +232,5 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.18`            | M2 audit: the tag lists include `v1.2.17`.                               |
 | `v1.2.19`            | M2 repair: a second mutable borrow and a pointer to a pointer.           |
 | `v1.2.20`            | M2 audit: the tag lists include `v1.2.19`.                               |
+| `v1.2.21`            | M2 repair: an empty mutable string is a null pointer with count zero.    |
+| `v1.2.22`            | M2 audit: the tag lists include `v1.2.21`.                               |
