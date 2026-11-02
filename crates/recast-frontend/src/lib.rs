@@ -566,7 +566,8 @@ impl Lowerer {
         for elem in elems {
             lowered.push(self.lower_expr(elem, nodes)?);
         }
-        match self.program.types.get(target).cloned() {
+        // A typedef of a record or array initializes like the type it names.
+        match self.program.types.canonical(target).cloned() {
             Some(Type::Array { elem, len }) => {
                 if lowered.len() as u64 > len {
                     return Err(FrontendError::new(

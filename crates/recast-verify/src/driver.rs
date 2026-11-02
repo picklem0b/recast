@@ -61,48 +61,53 @@ fn call_driver(
             call.function
         )));
     }
-    let (c_args, r_args) = arguments(program, function, &call.args)?;
-    let c_call = format!("{}({})", function.name, c_args.join(", "));
-    let r_call = format!("generated::{}({})", function.name, r_args.join(", "));
+    let arguments = arguments(program, function, &call.args)?;
+    let c_call = format!("{}({})", function.name, arguments.c_args.join(", "));
+    let r_call = format!(
+        "generated::{}({})",
+        function.name,
+        arguments.r_args.join(", ")
+    );
     let ret = function.signature.ret;
-    match program.types.get(ret) {
+    // A typedef of a record returns a record: the canonical type decides how
+    // the value is printed, and the spelling named by the typedef is the one
+    // the source can compile. Every call runs in its own block, so a pointer
+    // argument's place exists before the call and can be printed after it.
+    let mut c_lines = arguments.c_setup;
+    let mut r_lines = arguments.r_setup;
+    let mut c_values = Vec::new();
+    let mut r_values = Vec::new();
+
+    match program.types.canonical(ret) {
         Some(Type::Void) => {
-            c_body.push_str(&format!("    {c_call};\n    printf(\"void\\n\");\n"));
-            r_body.push_str(&format!("    {r_call};\n    println!(\"void\");\n"));
+            c_lines.push(c_call);
+            r_lines.push(r_call);
         }
-        Some(Type::Record { name }) => {
+        Some(Type::Record { .. }) => {
             let mut fields = Vec::new();
             flatten_fields(program, ret, "r", &mut fields)?;
-            let c_type = format!("struct {name}");
-            let format = vec!["%lld"; fields.len()].join(" ");
-            let c_values = fields
-                .iter()
-                .map(|(path, _)| format!("(long long)({path})"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            c_body.push_str(&format!(
-                "    {{ {c_type} r = {c_call}; printf(\"{format}\\n\", {c_values}); }}\n"
-            ));
-            let r_format = vec!["{}"; fields.len()].join(" ");
-            let r_values = fields
-                .iter()
-                .map(|(path, _)| format!("{path} as i64"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            r_body.push_str(&format!(
-                "    {{ let r = {r_call}; println!(\"{r_format}\", {r_values}); }}\n"
-            ));
+            if fields.is_empty() {
+                return Err(Error::Unsupported(
+                    "a record with no printable field cannot be compared".to_string(),
+                ));
+            }
+            let spelled = c_type(program, ret);
+            c_lines.push(format!("{spelled} r = {c_call}"));
+            r_lines.push(format!("let r = {r_call}"));
+            for (path, _) in &fields {
+                c_values.push(format!("(long long)({path})"));
+                r_values.push(format!("{path} as i64"));
+            }
         }
-        Some(Type::Bool | Type::Char { .. } | Type::Int { .. } | Type::Enum { .. })
-        | Some(Type::Named { .. }) => {
-            c_body.push_str(&format!(
-                "    printf(\"%lld\\n\", (long long)({c_call}));\n"
-            ));
-            r_body.push_str(&format!("    println!(\"{{}}\", ({r_call}) as i64);\n"));
+        Some(Type::Bool | Type::Char { .. } | Type::Int { .. } | Type::Enum { .. }) => {
+            c_lines.push(format!("long long r = (long long)({c_call})"));
+            r_lines.push(format!("let r = ({r_call}) as i64"));
+            c_values.push("r".to_string());
+            r_values.push("r".to_string());
         }
         Some(Type::Float { .. }) => {
             return Err(Error::Unsupported(
-                "floating-point differential output is not part of M1".to_string(),
+                "floating-point differential output is not part of this milestone".to_string(),
             ))
         }
         other => {
@@ -111,24 +116,79 @@ fn call_driver(
             )))
         }
     }
+    c_values.extend(arguments.c_observed);
+    r_values.extend(arguments.r_observed);
+
+    let c_print = if c_values.is_empty() {
+        "printf(\"void\\n\");".to_string()
+    } else {
+        let format = vec!["%lld"; c_values.len()].join(" ");
+        format!("printf(\"{format}\\n\", {});", c_values.join(", "))
+    };
+    let r_print = if r_values.is_empty() {
+        "println!(\"void\");".to_string()
+    } else {
+        let format = vec!["{}"; r_values.len()].join(" ");
+        format!("println!(\"{format}\", {});", r_values.join(", "))
+    };
+
+    c_body.push_str("    {\n");
+    for line in &c_lines {
+        c_body.push_str("        ");
+        c_body.push_str(line);
+        c_body.push_str(";\n");
+    }
+    c_body.push_str("        ");
+    c_body.push_str(&c_print);
+    c_body.push_str("\n    }\n");
+
+    r_body.push_str("    {\n");
+    for line in &r_lines {
+        r_body.push_str("        ");
+        r_body.push_str(line);
+        r_body.push_str(";\n");
+    }
+    r_body.push_str("        ");
+    r_body.push_str(&r_print);
+    r_body.push_str("\n    }\n");
     Ok(())
 }
 
-/// Build the two sides of one call's argument list.
+/// One call's argument lists, plus the places a pointer argument needs.
+pub(crate) struct Arguments {
+    c_args: Vec<String>,
+    r_args: Vec<String>,
+    /// Statements that declare the place a pointer argument refers to.
+    c_setup: Vec<String>,
+    r_setup: Vec<String>,
+    /// Expressions printed after the call, for a pointee the callee may write.
+    c_observed: Vec<String>,
+    r_observed: Vec<String>,
+}
+
+/// Build the two sides of one call's argument list. A pointer argument gets a
+/// place of its own before the call, so an output parameter can be compared
+/// after it.
 pub(crate) fn arguments(
     program: &Program,
     function: &Function,
     values: &[Value],
-) -> Result<(Vec<String>, Vec<String>), Error> {
+) -> Result<Arguments, Error> {
     let params = &function.signature.params;
-    let length_index = slice_length_index(program, function);
-    let mut c_args = Vec::new();
-    let mut r_args = Vec::new();
+    let group = recast_ir::slice::slice_group(program, params);
+    let mut arguments = Arguments {
+        c_args: Vec::new(),
+        r_args: Vec::new(),
+        c_setup: Vec::new(),
+        r_setup: Vec::new(),
+        c_observed: Vec::new(),
+        r_observed: Vec::new(),
+    };
     let mut used = 0;
     let mut slice_len: Option<usize> = None;
 
     for (index, param) in params.iter().enumerate() {
-        if Some(index) == length_index {
+        if group.as_ref().is_some_and(|group| group.length == index) {
             // The C parameter list keeps the length in its own position, so
             // the derived value goes here, not at the end of the call.
             let len = slice_len.ok_or_else(|| {
@@ -137,7 +197,7 @@ pub(crate) fn arguments(
                     function.name
                 ))
             })?;
-            c_args.push(len.to_string());
+            arguments.c_args.push(len.to_string());
             continue;
         }
         let value = values.get(used).ok_or_else(|| {
@@ -147,24 +207,47 @@ pub(crate) fn arguments(
             ))
         })?;
         used += 1;
-        if length_index.is_some_and(|length| index < length) {
-            let (c, rust, len) = slice_argument(program, param.ty, value)?;
+        if group
+            .as_ref()
+            .is_some_and(|group| group.contains_pointer(index))
+        {
+            let slice = slice_argument(program, param.ty, value, index, slice_len)?;
+            // The call passes one length for every slice: the first slice's.
+            // C reads that many elements from each, so a later slice may be
+            // longer (the callee sees fewer than it holds) but not shorter.
             if let Some(existing) = slice_len {
-                if existing != len {
+                if slice.len < existing {
                     return Err(Error::Case(format!(
-                        "{} has two slices of different lengths",
-                        function.name
+                        "{} passes {existing} elements but a later slice holds {}",
+                        function.name, slice.len
                     )));
                 }
             } else {
-                slice_len = Some(len);
+                slice_len = Some(slice.len);
             }
-            c_args.push(c);
-            r_args.push(rust);
+            arguments.c_args.push(slice.c_arg);
+            arguments.r_args.push(slice.r_arg);
+            arguments.c_setup.extend(slice.c_setup);
+            arguments.r_setup.extend(slice.r_setup);
+            arguments.c_observed.extend(slice.c_observed);
+            arguments.r_observed.extend(slice.r_observed);
+        } else if matches!(
+            program.types.canonical(param.ty),
+            Some(Type::Pointer { .. })
+        ) {
+            let pointer = pointer_argument(program, param.ty, value, index)?;
+            arguments.c_args.push(pointer.c_arg);
+            arguments.r_args.push(pointer.r_arg);
+            arguments.c_setup.push(pointer.c_setup);
+            arguments.r_setup.push(pointer.r_setup);
+            if let (Some(c), Some(rust)) = (pointer.c_observed, pointer.r_observed) {
+                arguments.c_observed.push(c);
+                arguments.r_observed.push(rust);
+            }
         } else {
             let (c, rust) = value_argument(program, param.ty, value)?;
-            c_args.push(c);
-            r_args.push(rust);
+            arguments.c_args.push(c);
+            arguments.r_args.push(rust);
         }
     }
     if used != values.len() {
@@ -174,95 +257,299 @@ pub(crate) fn arguments(
             values.len()
         )));
     }
-    Ok((c_args, r_args))
+    Ok(arguments)
 }
 
-fn slice_length_index(program: &Program, function: &Function) -> Option<usize> {
-    let params = &function.signature.params;
-    let index = params
-        .iter()
-        .position(|param| is_size_t(program, param.ty))?;
-    if index == 0 {
-        return None;
-    }
-    if params[..index]
-        .iter()
-        .all(|param| matches!(program.types.get(param.ty), Some(Type::Pointer { .. })))
-    {
-        Some(index)
-    } else {
-        None
+struct PointerArgument {
+    c_setup: String,
+    r_setup: String,
+    c_arg: String,
+    r_arg: String,
+    c_observed: Option<String>,
+    r_observed: Option<String>,
+}
+
+/// A pointer to one scalar: the case value is the pointee's initial value. A
+/// non-const pointer is an output parameter, so its value is printed after the
+/// call as well.
+fn pointer_argument(
+    program: &Program,
+    ty: TypeId,
+    value: &Value,
+    index: usize,
+) -> Result<PointerArgument, Error> {
+    let Some(Type::Pointer { pointee, is_const }) = program.types.canonical(ty) else {
+        return Err(Error::Case("expected a pointer parameter".to_string()));
+    };
+    let rust_type = rust_scalar(program, *pointee).ok_or_else(|| {
+        Error::Unsupported(
+            "a pointer whose pointee is not a scalar is the next M2 step".to_string(),
+        )
+    })?;
+    let c_type = c_type(program, *pointee);
+    let (c_value, r_value) = value_argument(program, *pointee, value)?;
+    let name = format!("a{index}");
+    let mutable = !*is_const;
+    Ok(PointerArgument {
+        c_setup: format!("{c_type} {name} = {c_value}"),
+        r_setup: if mutable {
+            format!("let mut {name}: {rust_type} = {r_value}")
+        } else {
+            format!("let {name}: {rust_type} = {r_value}")
+        },
+        c_arg: format!("&{name}"),
+        r_arg: if mutable {
+            format!("&mut {name}")
+        } else {
+            format!("&{name}")
+        },
+        c_observed: mutable.then(|| format!("(long long)({name})")),
+        r_observed: mutable.then(|| format!("{name} as i64")),
+    })
+}
+
+/// The Rust spelling of a scalar the driver can own and print.
+fn rust_scalar(program: &Program, id: TypeId) -> Option<String> {
+    match program.types.canonical(id) {
+        Some(Type::Bool) => Some("bool".to_string()),
+        Some(Type::Char { signed }) => Some(if *signed { "i8" } else { "u8" }.to_string()),
+        Some(Type::Int { bits, signed, .. }) => {
+            Some(format!("{}{}", if *signed { 'i' } else { 'u' }, bits))
+        }
+        Some(Type::Enum { name }) => program
+            .enum_named(name)
+            .and_then(|item| rust_scalar(program, item.underlying)),
+        _ => None,
     }
 }
 
-fn is_size_t(program: &Program, id: TypeId) -> bool {
-    match program.types.get(id) {
-        Some(Type::Named { name, .. }) if name == "size_t" => true,
-        Some(Type::Int {
-            bits,
-            signed: false,
-            ..
-        }) => u16::from(*bits) == u16::from(program.target.size_t_bits),
-        _ => false,
-    }
+struct SliceArgument {
+    c_setup: Vec<String>,
+    r_setup: Vec<String>,
+    c_arg: String,
+    r_arg: String,
+    /// Printed after the call, for a slice the callee may write.
+    c_observed: Vec<String>,
+    r_observed: Vec<String>,
+    len: usize,
 }
 
+/// One slice argument. A `const T *` slice can be a compound literal, but a
+/// `T *` slice is `&mut [T]` in the generated Rust and has to be a place the
+/// driver owns, so it is declared and its elements are printed after the call.
 fn slice_argument(
     program: &Program,
     ty: TypeId,
     value: &Value,
-) -> Result<(String, String, usize), Error> {
-    let Some(Type::Pointer { pointee, .. }) = program.types.get(ty) else {
+    index: usize,
+    limit: Option<usize>,
+) -> Result<SliceArgument, Error> {
+    let Some(Type::Pointer { pointee, is_const }) = program.types.get(ty) else {
         return Err(Error::Case("expected a pointer parameter".to_string()));
     };
     let element = c_element_type(program, *pointee);
+    let mut slice = SliceArgument {
+        c_setup: Vec::new(),
+        r_setup: Vec::new(),
+        c_arg: String::new(),
+        r_arg: String::new(),
+        c_observed: Vec::new(),
+        r_observed: Vec::new(),
+        len: 0,
+    };
     match value {
         Value::String(text) if matches!(program.types.get(*pointee), Some(Type::Char { .. })) => {
             let signed = matches!(
                 program.types.get(*pointee),
                 Some(Type::Char { signed: true })
             );
-            // A byte-string literal has type `&[u8; N]`. When the target has a
-            // signed `char`, the translated parameter is `&[i8]`, so the
-            // elements have to be spelled out instead of relying on the
-            // literal's element type.
-            let rust = if signed {
-                let values = text
-                    .as_bytes()
+            let bytes = text.as_bytes();
+            if bytes.is_empty() {
+                // A zero-length array is a compiler extension in C; no elements
+                // is the null pointer with a count of zero, as for any slice.
+                slice.c_arg = format!("({element} *)0");
+                if *is_const {
+                    slice.r_arg = "&[]".to_string();
+                } else {
+                    let name = format!("a{index}");
+                    let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                        Error::Unsupported(
+                            "a slice element the driver cannot spell is the next M2 step"
+                                .to_string(),
+                        )
+                    })?;
+                    slice
+                        .r_setup
+                        .push(format!("let mut {name}: [{rust_element}; 0] = []"));
+                    slice.r_arg = format!("&mut {name}");
+                }
+            } else if *is_const {
+                // A byte-string literal has type `&[u8; N]`. When the target
+                // has a signed `char`, the translated parameter is `&[i8]`, so
+                // the elements have to be spelled out instead of relying on
+                // the literal's element type.
+                slice.r_arg = if signed {
+                    format!("&[{}]", byte_elements(bytes, "i8"))
+                } else {
+                    format!("b\"{}\"", escape_bytes(bytes))
+                };
+                slice.c_arg = format!("\"{}\"", escape_c(text));
+            } else {
+                let name = format!("a{index}");
+                let c_values = bytes
                     .iter()
-                    .map(|byte| format!("{}i8", *byte as i8))
+                    .map(|byte| u32::from(*byte).to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("&[{values}]")
-            } else {
-                format!("b\"{}\"", escape_bytes(text.as_bytes()))
-            };
-            Ok((format!("\"{}\"", escape_c(text)), rust, text.len()))
+                slice.c_setup.push(format!(
+                    "{element} {name}[{}] = {{{c_values}}}",
+                    bytes.len()
+                ));
+                slice.c_arg = name.clone();
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                let rust_values = if signed {
+                    byte_elements(bytes, "i8")
+                } else {
+                    bytes
+                        .iter()
+                        .map(|byte| format!("{byte}u8"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                slice.r_setup.push(format!(
+                    "let mut {name}: [{rust_element}; {}] = [{rust_values}]",
+                    bytes.len()
+                ));
+                slice.r_arg = format!("&mut {name}");
+            }
+            if !*is_const {
+                observe_elements(index, bytes.len(), &mut slice);
+            }
+            slice.len = bytes.len();
         }
         Value::Array(items) if items.is_empty() => {
-            Ok((format!("({element} *)0"), "&[]".to_string(), 0))
+            // C with no elements may pass a null pointer; `&mut []` is not a
+            // place, so the Rust side needs an empty array of its own.
+            slice.c_arg = format!("({element} *)0");
+            if *is_const {
+                slice.r_arg = "&[]".to_string();
+            } else {
+                let name = format!("a{index}");
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                slice
+                    .r_setup
+                    .push(format!("let mut {name}: [{rust_element}; 0] = []"));
+                slice.r_arg = format!("&mut {name}");
+            }
         }
         Value::Array(items) => {
-            let mut c_values = Vec::with_capacity(items.len());
-            let mut rust_values = Vec::with_capacity(items.len());
+            let mut numbers = Vec::with_capacity(items.len());
             for item in items {
-                let number = integer(item)?;
-                c_values.push(number.to_string());
-                rust_values.push(number.to_string());
+                numbers.push(integer(item)?);
             }
-            Ok((
-                format!("({element}[]){{{}}}", c_values.join(", ")),
-                format!("&[{}]", rust_values.join(", ")),
-                items.len(),
-            ))
+            if *is_const {
+                let c_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rust_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.c_arg = format!("({element}[]){{{c_values}}}");
+                slice.r_arg = format!("&[{rust_values}]");
+            } else {
+                let name = format!("a{index}");
+                let c_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.c_setup.push(format!(
+                    "{element} {name}[{}] = {{{c_values}}}",
+                    numbers.len()
+                ));
+                slice.c_arg = name.clone();
+                let rust_element = rust_scalar(program, *pointee).ok_or_else(|| {
+                    Error::Unsupported(
+                        "a slice element the driver cannot spell is the next M2 step".to_string(),
+                    )
+                })?;
+                let rust_values = numbers
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                slice.r_setup.push(format!(
+                    "let mut {name}: [{rust_element}; {}] = [{rust_values}]",
+                    numbers.len()
+                ));
+                slice.r_arg = format!("&mut {name}");
+            }
+            if !*is_const {
+                observe_elements(index, numbers.len(), &mut slice);
+            }
+            slice.len = numbers.len();
         }
-        _ => Err(Error::Case(format!(
-            "slice argument must be an array or string, found {value}"
-        ))),
+        _ => {
+            return Err(Error::Case(format!(
+                "slice argument must be an array or string, found {value}"
+            )))
+        }
+    }
+    // A later slice may hold more elements than the call's length; the
+    // callee still sees exactly the length, as C's count says.
+    if let Some(limit) = limit.filter(|limit| *limit < slice.len) {
+        let borrow = if slice.r_arg.starts_with("&mut ") {
+            "&mut "
+        } else {
+            "&"
+        };
+        let place = slice
+            .r_arg
+            .strip_prefix("&mut ")
+            .or_else(|| slice.r_arg.strip_prefix('&'))
+            .unwrap_or(&slice.r_arg)
+            .to_string();
+        slice.r_arg = format!("{borrow}{place}[..{limit}]");
+    }
+    Ok(slice)
+}
+
+/// `a{index}[0]`, `a{index}[1]`, ... for a slice the callee may write.
+fn observe_elements(index: usize, len: usize, slice: &mut SliceArgument) {
+    for element in 0..len {
+        slice
+            .c_observed
+            .push(format!("(long long)(a{index}[{element}])"));
+        slice.r_observed.push(format!("a{index}[{element}] as i64"));
     }
 }
 
+/// `97i8, 98i8, ...` for a byte array with explicit element types.
+fn byte_elements(bytes: &[u8], suffix: &str) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{}{suffix}", *byte as i8))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(String, String), Error> {
+    // The type as the source spells it: a typedef name for an alias, a
+    // `struct`/`enum` tag otherwise. The driver includes the source, so both
+    // are in scope.
+    let spelled = c_type(program, ty);
     match program.types.canonical(ty) {
         Some(Type::Bool) => {
             let flag = value
@@ -295,8 +582,34 @@ fn value_argument(program: &Program, ty: TypeId, value: &Value) -> Result<(Strin
                 r_fields.push(format!("{}: {rust}", field.name));
             }
             Ok((
-                format!("(struct {name}){{{}}}", c_fields.join(", ")),
+                format!("({spelled}){{{}}}", c_fields.join(", ")),
                 format!("generated::{name} {{ {} }}", r_fields.join(", ")),
+            ))
+        }
+        Some(Type::Array { elem, len }) => {
+            let items = value
+                .as_array()
+                .ok_or_else(|| Error::Case(format!("expected an array, found {value}")))?;
+            let expected = usize::try_from(*len).unwrap_or(usize::MAX);
+            if items.len() != expected {
+                return Err(Error::Case(format!(
+                    "expected {expected} element(s), found {}",
+                    items.len()
+                )));
+            }
+            let mut c_values = Vec::with_capacity(items.len());
+            let mut r_values = Vec::with_capacity(items.len());
+            for item in items {
+                let (c, rust) = value_argument(program, *elem, item)?;
+                c_values.push(c);
+                r_values.push(rust);
+            }
+            // An array member takes a braced initializer, not a compound
+            // literal: `(struct w){{1, 2, 3}, 4}`. M1 has no array parameter
+            // that would need the expression form.
+            Ok((
+                format!("{{{}}}", c_values.join(", ")),
+                format!("[{}]", r_values.join(", ")),
             ))
         }
         Some(Type::Named { canonical, .. }) => value_argument(program, *canonical, value),
@@ -357,13 +670,10 @@ fn c_type(program: &Program, id: TypeId) -> String {
         Some(Type::Float { spelling, .. }) => spelling.clone(),
         Some(Type::Record { name }) => format!("struct {name}"),
         Some(Type::Enum { name }) => format!("enum {name}"),
-        Some(Type::Named { name, canonical }) => {
-            if name == "size_t" {
-                "size_t".to_string()
-            } else {
-                c_type(program, *canonical)
-            }
-        }
+        // A typedef name is the spelling the source uses, and the driver
+        // includes the source, so `size_t`, `uint` and a record typedef are
+        // all in scope. A tag needs its keyword: `struct Point`.
+        Some(Type::Named { name, .. }) => name.clone(),
         Some(Type::Array { elem, len }) => format!("{}[{len}]", c_type(program, *elem)),
         _ => "long".to_string(),
     }
@@ -531,20 +841,101 @@ mod tests {
     }
 
     #[test]
+    fn array_arguments_are_built_from_their_elements() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let array = program.types.intern(Type::Array { elem: int, len: 3 });
+        let (c, rust) =
+            value_argument(&program, array, &serde_json::json!([1, 2, 3])).expect("array argument");
+        assert_eq!(c, "{1, 2, 3}");
+        assert_eq!(rust, "[1, 2, 3]");
+        let wrong = value_argument(&program, array, &serde_json::json!([1, 2]));
+        assert!(wrong.is_err(), "an argument must match the declared length");
+    }
+
+    #[test]
     fn string_arguments_follow_the_target_char_signedness() {
         let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
 
         let unsigned = pointer_to_char(&mut program, false);
-        let (c, rust, len) = slice_argument(&program, unsigned, &Value::String("hi".to_string()))
-            .expect("unsigned string argument");
-        assert_eq!(c, "\"hi\"");
-        assert_eq!(rust, "b\"hi\"");
-        assert_eq!(len, 2);
+        let slice = slice_argument(
+            &program,
+            unsigned,
+            &Value::String("hi".to_string()),
+            0,
+            None,
+        )
+        .expect("unsigned string argument");
+        assert_eq!(slice.c_arg, "\"hi\"");
+        assert_eq!(slice.r_arg, "b\"hi\"");
+        assert_eq!(slice.len, 2);
+        assert!(slice.c_setup.is_empty(), "a const slice needs no place");
 
         let signed = pointer_to_char(&mut program, true);
-        let (_, rust, len) = slice_argument(&program, signed, &Value::String("hi".to_string()))
+        let slice = slice_argument(&program, signed, &Value::String("hi".to_string()), 0, None)
             .expect("signed string argument");
-        assert_eq!(rust, "&[104i8, 105i8]");
-        assert_eq!(len, 2);
+        assert_eq!(slice.r_arg, "&[104i8, 105i8]");
+        assert_eq!(slice.len, 2);
+    }
+
+    #[test]
+    fn a_mutable_slice_argument_gets_a_place_and_is_observed() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let mutable = program.types.intern(Type::Pointer {
+            pointee: int,
+            is_const: false,
+        });
+        let slice = slice_argument(&program, mutable, &serde_json::json!([1, 2]), 3, None)
+            .expect("mutable slice argument");
+        assert_eq!(slice.c_setup, vec!["int a3[2] = {1, 2}".to_string()]);
+        assert_eq!(slice.c_arg, "a3");
+        assert_eq!(
+            slice.r_setup,
+            vec!["let mut a3: [i32; 2] = [1, 2]".to_string()]
+        );
+        assert_eq!(slice.r_arg, "&mut a3");
+        assert_eq!(
+            slice.c_observed,
+            vec![
+                "(long long)(a3[0])".to_string(),
+                "(long long)(a3[1])".to_string()
+            ]
+        );
+        assert_eq!(slice.r_observed, vec!["a3[0] as i64", "a3[1] as i64"]);
+    }
+
+    #[test]
+    fn a_slice_longer_than_the_call_is_narrowed() {
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        let int = program.types.intern(Type::Int {
+            bits: 32,
+            signed: true,
+            spelling: "int".to_string(),
+        });
+        let shared = program.types.intern(Type::Pointer {
+            pointee: int,
+            is_const: true,
+        });
+        let slice = slice_argument(
+            &program,
+            shared,
+            &serde_json::json!([1, 2, 3, 4]),
+            0,
+            Some(2),
+        )
+        .expect("a longer slice");
+        // The C call passes two elements; the array still holds four.
+        assert_eq!(slice.c_arg, "(int[]){1, 2, 3, 4}");
+        assert_eq!(slice.r_arg, "&[1, 2, 3, 4][..2]");
+        assert_eq!(slice.len, 4);
     }
 }

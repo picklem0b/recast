@@ -44,3 +44,16 @@ int min_int(int a, int b) {
     }
     return b;
 }
+
+int shift_assign(int a, int n) {
+    a <<= 1;
+    a >>= n;
+    a <<= 2;
+    return a;
+}
+
+unsigned int shift_assign_unsigned(unsigned int a, int n) {
+    a <<= 3;
+    a >>= 1;
+    return a;
+}

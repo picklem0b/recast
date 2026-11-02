@@ -94,6 +94,63 @@
       "args": [
         "a"
       ]
+    },
+    {
+      "function": "first",
+      "args": [
+        [
+          4,
+          -5,
+          6
+        ]
+      ]
+    },
+    {
+      "function": "first",
+      "args": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "function": "first_or",
+      "args": [
+        []
+      ]
+    },
+    {
+      "function": "first_or",
+      "args": [
+        [
+          7,
+          8
+        ]
+      ]
+    },
+    {
+      "function": "short_call",
+      "args": []
+    },
+    {
+      "function": "offset_call",
+      "args": []
+    },
+    {
+      "function": "dot",
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5,
+          6,
+          7
+        ]
+      ]
     }
   ]
 }

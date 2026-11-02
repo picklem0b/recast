@@ -57,3 +57,73 @@ int low_nibble(int value) {
     }
     return -1;
 }
+
+/* Unsigned case labels keep their value too. */
+int classify_unsigned(unsigned int key) {
+    switch (key) {
+        case 4000000000u:
+            return 4;
+        case 2147483648u:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+/* Arms with several statements: clang leaves the ones after the first as
+   siblings of the label, and dropping them changed the result silently. */
+int weighted(int key, int value) {
+    int total = 0;
+    switch (key) {
+        case 0:
+            total += value;
+            total *= 3;
+            break;
+        case 1:
+            total -= value;
+            if (total < 0) {
+                total += 10;
+            }
+            break;
+        default:
+            total = value + 1;
+            total ^= 5;
+    }
+    return total;
+}
+
+/* A trailing compound statement in the arm, and a `default` that is last with
+   several statements and no `break`. */
+int scaled(int key, int value) {
+    int total = 1;
+    switch (key) {
+        case 2: {
+            int scaled = value * 2;
+            total = scaled + 1;
+            break;
+        }
+        default:
+            total = value;
+            total -= 7;
+    }
+    return total;
+}
+
+/* A `continue` in an arm leaves the switch for the loop; it is not
+   fallthrough into the next case. */
+int skip_threes(int limit) {
+    int total = 0;
+    for (int i = 0; i < limit; i++) {
+        switch (i % 3) {
+            case 0:
+                continue;
+            case 1:
+                total += i;
+                break;
+            default:
+                total += 10;
+        }
+        total += 100;
+    }
+    return total;
+}

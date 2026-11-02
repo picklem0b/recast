@@ -148,6 +148,36 @@
       "args": [
         1
       ]
+    },
+    {
+      "function": "discard",
+      "args": [
+        3
+      ]
+    },
+    {
+      "function": "discard",
+      "args": [
+        -1
+      ]
+    },
+    {
+      "function": "counted",
+      "args": [
+        0
+      ]
+    },
+    {
+      "function": "counted",
+      "args": [
+        1
+      ]
+    },
+    {
+      "function": "counted",
+      "args": [
+        -5
+      ]
     }
   ]
 }

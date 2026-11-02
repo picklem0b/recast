@@ -36,6 +36,7 @@ Supporting documents:
 | [`project/review-v1.md`](project/review-v1.md)                           | Critical review of the v1.0 specification                   |
 | [`audits/m0.md`](audits/m0.md)                                           | M0 audit: defects found, repairs and remaining limitations  |
 | [`audits/m1.md`](audits/m1.md)                                           | M1 audit: corpus, verification results and remaining limits |
+| [`audits/m2.md`](audits/m2.md)                                           | M2 audit in progress: build points, assumption and remaining work |
 
 ---
 

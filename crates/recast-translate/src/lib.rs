@@ -6,19 +6,22 @@
 //! `continue`.
 //!
 //! Slice recognition is deliberately conservative: a pointer parameter is
-//! treated as a slice only when the next parameter is a `size_t`, and every use
-//! of the pointer must be an index and every use of the length must be a
-//! standalone local. Anything else is refused rather than translated unsafely.
+//! treated as a slice only when the pointer group is followed by a `size_t`,
+//! and every use of the pointer must be an index and every use of the length
+//! must be a standalone local. Anything else is refused rather than translated
+//! unsafely. The rule itself lives in [`recast_ir::slice`], so the signature,
+//! the driver's call sites and the tier rules cannot disagree about which
+//! parameters are one slice.
 
 pub mod rust;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::fmt;
 
 use recast_ir::{
-    Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage, Program, RecordDef, Stmt,
-    StmtKind, Type, TypeId,
+    is_size_t, slice_group, Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage,
+    Program, RecordDef, Stmt, StmtKind, Type, TypeId,
 };
 use rust::{
     Expr as RExpr, File as RFile, Fn as RFn, Item as RItem, MatchArm, Pattern, Stmt as RStmt,
@@ -74,6 +77,8 @@ pub fn translate(program: &Program) -> Result<Translation, TranslateError> {
         if function.body.is_none() {
             continue;
         }
+        check_ident(&function.name)
+            .map_err(|message| TranslateError::new(&function.name, message))?;
         let translator = Translator::new(program, function)?;
         file.fns.push(translator.function_item(function)?);
     }
@@ -82,14 +87,42 @@ pub fn translate(program: &Program) -> Result<Translation, TranslateError> {
     })
 }
 
+/// Rust keywords, including the reserved ones of edition 2021.
+///
+/// A C name in this set does not parse as a Rust identifier, and the raw form
+/// is not available either: `r#crate`, `r#self` and `r#super` are rejected.
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
+    "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "if", "impl", "in",
+    "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "union", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
+/// Refuse a C name that is a Rust keyword.
+///
+/// Renaming would need the C name kept for the ABI and the Rust name kept in
+/// step across every use site; until that pass exists, a named refusal is
+/// better than Rust that does not parse.
+fn check_ident(name: &str) -> Result<(), String> {
+    if RUST_KEYWORDS.contains(&name) {
+        return Err(format!(
+            "`{name}` is a Rust keyword, so a C name that collides with one needs the M2 rename pass"
+        ));
+    }
+    Ok(())
+}
+
 fn append_record(
     program: &Program,
     record: &RecordDef,
     file: &mut RFile,
 ) -> Result<(), TranslateError> {
     let context = format!("record {}", record.name);
+    check_ident(&record.name).map_err(|message| TranslateError::new(&context, message))?;
     let mut fields = Vec::with_capacity(record.fields.len());
     for field in &record.fields {
+        check_ident(&field.name).map_err(|message| TranslateError::new(&context, message))?;
         fields.push((
             field.name.clone(),
             type_name(program, field.ty)
@@ -119,6 +152,7 @@ fn append_global(
     global: &Global,
     file: &mut RFile,
 ) -> Result<(), TranslateError> {
+    check_ident(&global.name).map_err(|message| TranslateError::new(&global.name, message))?;
     if !global.is_const {
         return Err(TranslateError::new(
             &global.name,
@@ -139,7 +173,9 @@ fn append_global(
         function: &global.name,
         ret: global.ty,
         assigned: BTreeSet::new(),
+        params: BTreeSet::new(),
         slices: Vec::new(),
+        borrowed: RefCell::new(BTreeSet::new()),
     };
     let value = translator.value(init, global.ty)?;
     file.items.push(RItem::Const {
@@ -203,7 +239,12 @@ struct Translator<'a> {
     function: &'a str,
     ret: TypeId,
     assigned: BTreeSet<String>,
+    params: BTreeSet<String>,
     slices: Vec<SlicePlan>,
+    /// Root places a mutable pointer local borrows. Rust allows one live
+    /// `&mut` per place, so a second borrow or a write through the place is
+    /// refused rather than emitted as borrow-checker errors.
+    borrowed: RefCell<BTreeSet<String>>,
     /// Serial for generated labels, so two nested loops cannot shadow another
     /// loop's label.
     labels: Cell<u32>,
@@ -211,32 +252,21 @@ struct Translator<'a> {
 
 impl<'a> Translator<'a> {
     fn new(program: &'a Program, function: &'a Function) -> Result<Self, TranslateError> {
+        // The C idiom `(const T *a, const T *b, ..., size_t n)`: every pointer
+        // before a `size_t` shares that length. One rule, shared with the
+        // driver, so the signature and the call sites cannot disagree.
         let mut slices = Vec::new();
-        // Recognize the C idiom `(const T *a, const T *b, ..., size_t n)`:
-        // every pointer before a `size_t` shares that length.
-        if let Some(index) = function
-            .signature
-            .params
-            .iter()
-            .position(|param| is_size_t(program, param.ty))
-        {
-            let length_name = function.signature.params[index].name.clone();
-            let pointers_only = index > 0
-                && function.signature.params[..index]
-                    .iter()
-                    .all(|param| matches!(program.types.get(param.ty), Some(Type::Pointer { .. })));
-            if let Some(length_name) = length_name.filter(|_| pointers_only) {
-                for pointer in &function.signature.params[..index] {
-                    let Some(pointer_name) = &pointer.name else {
+        if let Some(group) = slice_group(program, &function.signature.params) {
+            if let Some(length_name) = function.signature.params[group.length].name.clone() {
+                for index in &group.pointers {
+                    let param = &function.signature.params[*index];
+                    let Some(pointer_name) = &param.name else {
                         continue;
                     };
-                    let Some(Type::Pointer { pointee, is_const }) = program.types.get(pointer.ty)
+                    let Some(Type::Pointer { pointee, is_const }) = program.types.get(param.ty)
                     else {
                         continue;
                     };
-                    if !is_slice_element(program, *pointee) {
-                        continue;
-                    }
                     slices.push(SlicePlan {
                         pointer: pointer_name.clone(),
                         length: length_name.clone(),
@@ -250,6 +280,14 @@ impl<'a> Translator<'a> {
         let mut assigned = BTreeSet::new();
         if let Some(body) = &function.body {
             collect_assigned(body, &mut assigned);
+            collect_mutable_borrows(program, body, &mut assigned);
+        }
+
+        let mut params = BTreeSet::new();
+        for param in &function.signature.params {
+            if let Some(name) = &param.name {
+                params.insert(name.clone());
+            }
         }
 
         Ok(Self {
@@ -257,7 +295,9 @@ impl<'a> Translator<'a> {
             function: &function.name,
             ret: function.signature.ret,
             assigned,
+            params,
             slices,
+            borrowed: RefCell::new(BTreeSet::new()),
             labels: Cell::new(0),
         })
     }
@@ -281,12 +321,10 @@ impl<'a> Translator<'a> {
                 .name
                 .clone()
                 .ok_or_else(|| self.error("a parameter has no name"))?;
+            check_ident(&name).map_err(|message| self.error(message))?;
             if self.slice_by_length(&name).is_some() {
-                if self.length_parameter_is_used(source, &name) {
-                    return Err(self.error(format!(
-                        "slice length {name} is used as a value; M1 only supports `len()`"
-                    )));
-                }
+                // The length is not an argument: every use of it lowers to
+                // `{slice}.len()`, whether or not the body mentions it.
                 continue;
             }
             if let Some(plan) = self.slice_by_pointer(&name) {
@@ -303,6 +341,11 @@ impl<'a> Translator<'a> {
             params.push((name, self.rust_type(param.ty)?));
         }
 
+        if self.is_pointer(function.signature.ret) {
+            return Err(self.error(
+                "a function returning a pointer needs an explicit lifetime; outside the M2 pointer step",
+            ));
+        }
         let ret = self.rust_type(function.signature.ret)?;
         let value = !is_unit(self.program, function.signature.ret);
         let body = self.body(source, value)?;
@@ -606,10 +649,16 @@ impl<'a> Translator<'a> {
     }
 
     fn decl(&self, name: &str, ty: TypeId, init: Option<&Expr>) -> Result<RStmt, TranslateError> {
+        check_ident(name).map_err(|message| self.error(message))?;
+        if self.is_mutable_pointer(ty) {
+            if let Some(init) = init {
+                self.track_borrow(init)?;
+            }
+        }
         let rust_ty = self.rust_type(ty)?;
         let init = match init {
-            Some(init) => Some(self.value(init, ty)?),
-            None => match self.program.types.get(ty) {
+            Some(init) => Some(self.reborrow(self.value(init, ty)?, ty)),
+            None => match self.program.types.canonical(ty) {
                 Some(Type::Array { .. }) | Some(Type::Record { .. }) => {
                     // C leaves these indeterminate. Zeroing keeps the generated
                     // Rust total; definite-assignment analysis reports reads
@@ -628,6 +677,12 @@ impl<'a> Translator<'a> {
     }
 
     fn expr_statement(&self, expr: &Expr) -> Result<RStmt, TranslateError> {
+        if let ExprKind::Cast { to, expr, .. } = &expr.kind {
+            if matches!(self.program.types.get(*to), Some(Type::Void)) {
+                // `(void)x;` evaluates `x` and drops the value.
+                return Ok(RStmt::Discard(self.expr(expr)?));
+            }
+        }
         match &expr.kind {
             ExprKind::Assign { op, lhs, rhs } => self.assign_statement(op, lhs, rhs),
             ExprKind::Unary {
@@ -635,6 +690,13 @@ impl<'a> Translator<'a> {
                 operand,
                 postfix: _,
             } if op == "++" || op == "--" => {
+                if let Some(name) = root_local(operand) {
+                    if self.borrowed.borrow().contains(name) {
+                        return Err(self.error(format!(
+                            "{name} is updated while a mutable pointer borrows it; the M2 ownership model is needed"
+                        )));
+                    }
+                }
                 let target = self.expr(operand)?;
                 let step = if op == "++" {
                     "wrapping_add"
@@ -648,14 +710,14 @@ impl<'a> Translator<'a> {
                         value: RExpr::Method {
                             receiver: Box::new(target),
                             method: step.to_string(),
-                            args: vec![RExpr::Int(1)],
+                            args: vec![RExpr::int(1)],
                         },
                     })
                 } else {
                     Ok(RStmt::Assign {
                         target,
                         op: if op == "++" { "+=" } else { "-=" },
-                        value: RExpr::Int(1),
+                        value: RExpr::int(1),
                     })
                 }
             }
@@ -664,6 +726,47 @@ impl<'a> Translator<'a> {
     }
 
     fn assign_statement(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Result<RStmt, TranslateError> {
+        if let Some(name) = root_local(lhs) {
+            if self.borrowed.borrow().contains(name) {
+                return Err(self.error(format!(
+                    "{name} is assigned while a mutable pointer borrows it; the M2 ownership model is needed"
+                )));
+            }
+        }
+        if self.is_mutable_pointer(lhs.ty) && op == "=" {
+            self.track_borrow(rhs)?;
+        }
+        if let Some(name) = root_local(lhs) {
+            if let Some(plan) = self.slice_by_length(name) {
+                return Err(self.error(format!(
+                    "{name} is the length of slice {}; assigning it needs the M2 extent facts",
+                    plan.pointer
+                )));
+            }
+        }
+        if op == "<<=" || op == ">>=" {
+            // The same shift the binary form lowers, so an out-of-range count
+            // keeps its UB-007 panic instead of wrapping silently.
+            let shift = self.shift(if op == "<<=" { "<<" } else { ">>" }, lhs, rhs)?;
+            return Ok(RStmt::Assign {
+                target: self.expr(lhs)?,
+                op: "=",
+                value: shift,
+            });
+        }
+        if op == "=" && self.is_mutable_pointer(lhs.ty) {
+            // `p = q` leaves both C pointers valid, which two Rust `&mut`
+            // references cannot express. A fresh borrow (`p = &x`) and a local
+            // that has not taken a borrow yet are still fine; a parameter that
+            // already holds one is not.
+            if let Some(name) = root_local(lhs) {
+                if self.params.contains(name) {
+                    return Err(self.error(format!(
+                        "{name} is a pointer parameter; assigning it another pointer needs the M2 ownership model"
+                    )));
+                }
+            }
+        }
         let op = match op {
             "=" => "=",
             "+=" => "+=",
@@ -703,16 +806,16 @@ impl<'a> Translator<'a> {
         Ok(RStmt::Assign {
             target: self.expr(lhs)?,
             op,
-            value: self.value(rhs, lhs.ty)?,
+            value: self.reborrow(self.value(rhs, lhs.ty)?, lhs.ty),
         })
     }
 
     fn expr(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
         match &expr.kind {
-            ExprKind::IntLit(value) => Ok(RExpr::Int(*value)),
+            ExprKind::IntLit(value) => Ok(self.int_literal(*value, expr.ty)),
             ExprKind::FloatLit(value) => Ok(RExpr::Float(*value)),
             ExprKind::BoolLit(value) => Ok(RExpr::Bool(*value)),
-            ExprKind::CharLit(value) => Ok(RExpr::Int(i64::from(*value))),
+            ExprKind::CharLit(value) => Ok(self.int_literal(i64::from(*value), expr.ty)),
             ExprKind::StringLit(value) => Ok(RExpr::Bytes(value.clone().into_bytes())),
             ExprKind::Local(name) => {
                 if let Some(plan) = self.slice_by_length(name) {
@@ -740,22 +843,57 @@ impl<'a> Translator<'a> {
                 }
                 Ok(RExpr::Path(global.name.clone()))
             }
-            ExprKind::EnumConst { value, .. } => Ok(RExpr::Int(*value)),
+            ExprKind::EnumConst { value, .. } => Ok(self.int_literal(*value, expr.ty)),
             ExprKind::Unary { op, operand, .. } => match op.as_str() {
                 "-" if is_unsigned(self.program, operand.ty) => Ok(RExpr::Method {
-                    receiver: Box::new(self.value(operand, operand.ty)?),
+                    receiver: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                     method: "wrapping_neg".to_string(),
                     args: Vec::new(),
                 }),
+                // A negated literal keeps its own type: without it, a cast of
+                // the result would infer the target into the literal and reject
+                // the negation (`(-1) as u32` is an error, `-1i32 as u32` is not).
                 "-" => Ok(RExpr::Unary {
                     op: "-",
-                    expr: Box::new(self.value(operand, operand.ty)?),
+                    expr: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                 }),
                 "~" => Ok(RExpr::Unary {
                     op: "!",
-                    expr: Box::new(self.value(operand, operand.ty)?),
+                    expr: Box::new(self.typed(self.value(operand, operand.ty)?, operand.ty)),
                 }),
                 "+" => self.value(operand, operand.ty),
+                // A pointer to one object is a reference, so a dereference is
+                // a dereference and an address-of is a borrow.
+                "*" => {
+                    // A slice parameter is `&[T]`: `*p` would be an unsized
+                    // place. The C that says `*p` treats `p` as one object, so
+                    // the two readings disagree and the extent facts have to
+                    // decide.
+                    if let ExprKind::Local(name) = &unwrap_casts(operand).kind {
+                        if self.slice_by_pointer(name).is_some() {
+                            return Err(self.error(format!(
+                                "{name} is a slice parameter, so `*{name}` reads it as one object; the M2 extent facts are needed"
+                            )));
+                        }
+                    }
+                    Ok(RExpr::Unary {
+                        op: "*",
+                        expr: Box::new(self.value(operand, operand.ty)?),
+                    })
+                }
+                "&" => {
+                    let mutable = matches!(
+                        self.program.types.canonical(expr.ty),
+                        Some(Type::Pointer {
+                            is_const: false,
+                            ..
+                        })
+                    );
+                    Ok(RExpr::Unary {
+                        op: if mutable { "&mut" } else { "&" },
+                        expr: Box::new(self.expr(operand)?),
+                    })
+                }
                 "!" => Ok(RExpr::Unary {
                     op: "!",
                     expr: Box::new(self.condition(operand)?),
@@ -767,23 +905,10 @@ impl<'a> Translator<'a> {
             ExprKind::Assign { .. } => {
                 Err(self.error("an assignment used as a value is not supported"))
             }
-            ExprKind::Index { base, index } => {
-                let base = self.index_base(base)?;
-                let lowered = self.value(index, index.ty)?;
-                let index_type = self.rust_type(index.ty)?;
-                let index = if index_type == "usize" {
-                    lowered
-                } else {
-                    RExpr::Cast {
-                        expr: Box::new(lowered),
-                        ty: "usize".to_string(),
-                    }
-                };
-                Ok(RExpr::Index {
-                    base: Box::new(base),
-                    index: Box::new(index),
-                })
-            }
+            ExprKind::Index { base, index } => Ok(RExpr::Index {
+                base: Box::new(self.index_base(base)?),
+                index: Box::new(self.index_value(index)?),
+            }),
             ExprKind::Member { base, field, arrow } => {
                 if *arrow {
                     return Err(self.error(
@@ -806,19 +931,16 @@ impl<'a> Translator<'a> {
             }),
             ExprKind::InitList(_) => self.aggregate(expr, expr.ty),
             ExprKind::Call { callee, args } => {
-                let (name, parameters) = match callee {
+                let (name, parameters, group) = match callee {
                     Callee::Direct(id) => {
                         let function = self.program.function(id).ok_or_else(|| {
                             self.error(format!("call target {id} does not exist"))
                         })?;
+                        let params = &function.signature.params;
                         (
                             function.name.clone(),
-                            function
-                                .signature
-                                .params
-                                .iter()
-                                .map(|param| param.ty)
-                                .collect::<Vec<_>>(),
+                            params.iter().map(|param| param.ty).collect::<Vec<_>>(),
+                            slice_group(self.program, params),
                         )
                     }
                     Callee::Indirect(_) => {
@@ -829,9 +951,48 @@ impl<'a> Translator<'a> {
                     }
                 };
                 let mut lowered = Vec::with_capacity(args.len());
+                let mut mutable_roots = BTreeSet::new();
                 for (index, arg) in args.iter().enumerate() {
+                    if group.as_ref().is_some_and(|group| group.length == index) {
+                        // The callee takes the slice itself; its length is the
+                        // slice's `len()` in Rust, not an argument.
+                        continue;
+                    }
                     let expected = parameters.get(index).copied().unwrap_or(arg.ty);
-                    lowered.push(self.value(arg, expected)?);
+                    // C lets one object reach a call twice, once per pointer
+                    // parameter, and the callee may write through either. Rust
+                    // refuses the second mutable borrow, so the call is
+                    // refused rather than emitted as code that does not build.
+                    if matches!(
+                        self.program.types.canonical(expected),
+                        Some(Type::Pointer {
+                            is_const: false,
+                            ..
+                        })
+                    ) {
+                        if let Some(root) = mutable_root(arg) {
+                            if !mutable_roots.insert(root.clone()) {
+                                return Err(self.error(format!(
+                                    "{root} is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed"
+                                )));
+                            }
+                        }
+                    }
+                    if let Some(group) =
+                        group.as_ref().filter(|group| group.contains_pointer(index))
+                    {
+                        // The callee's slice is exactly its length argument: a
+                        // call may pass an array longer than the count, and C
+                        // reads only the first `n` elements.
+                        lowered.push(self.slice_reference(arg, expected, &args[group.length])?);
+                        continue;
+                    }
+                    if let Some(decayed) = self.decayed_reference(arg, expected)? {
+                        lowered.push(decayed);
+                        continue;
+                    }
+                    let value = self.value(arg, expected)?;
+                    lowered.push(self.reborrow(value, expected));
                 }
                 Ok(RExpr::Call {
                     callee: Box::new(RExpr::Path(name)),
@@ -853,7 +1014,8 @@ impl<'a> Translator<'a> {
         let ExprKind::InitList(elems) = &expr.kind else {
             return Err(self.error("expected an initializer list"));
         };
-        match self.program.types.get(ty) {
+        // A typedef of a record or array initializes like the type it names.
+        match self.program.types.canonical(ty) {
             Some(Type::Record { name }) => {
                 let record = self
                     .program
@@ -883,6 +1045,14 @@ impl<'a> Translator<'a> {
     }
 
     fn binary(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Result<RExpr, TranslateError> {
+        if self.is_pointer(lhs.ty) || self.is_pointer(rhs.ty) {
+            // A C pointer comparison compares addresses, and pointer
+            // arithmetic is bounded differently; both need the M2 ownership
+            // and extent facts rather than a Rust operator.
+            return Err(self.error(format!(
+                "operator {op} on a pointer needs the M2 ownership model"
+            )));
+        }
         match op {
             "&&" | "||" => Ok(RExpr::Binary {
                 op: if op == "&&" { "&&" } else { "||" },
@@ -912,7 +1082,7 @@ impl<'a> Translator<'a> {
                         _ => "wrapping_mul",
                     };
                     return Ok(RExpr::Method {
-                        receiver: Box::new(lhs_expr),
+                        receiver: Box::new(self.typed(lhs_expr, lhs.ty)),
                         method: method.to_string(),
                         args: vec![rhs_expr],
                     });
@@ -955,7 +1125,7 @@ impl<'a> Translator<'a> {
             "checked_shr"
         };
         let checked = RExpr::Method {
-            receiver: Box::new(lhs_expr),
+            receiver: Box::new(self.typed(lhs_expr, lhs.ty)),
             method: method.to_string(),
             args: vec![RExpr::Cast {
                 expr: Box::new(rhs_expr),
@@ -970,6 +1140,9 @@ impl<'a> Translator<'a> {
     }
 
     fn condition(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
+        if self.is_pointer(expr.ty) {
+            return Err(self.error("a pointer used as a condition needs the M2 ownership model"));
+        }
         if let ExprKind::Cast {
             to, expr: inner, ..
         } = &expr.kind
@@ -998,7 +1171,7 @@ impl<'a> Translator<'a> {
             _ => Ok(RExpr::Binary {
                 op: "!=",
                 lhs: Box::new(self.expr(expr)?),
-                rhs: Box::new(RExpr::Int(0)),
+                rhs: Box::new(RExpr::int(0)),
             }),
         }
     }
@@ -1038,6 +1211,36 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// An integer literal, spelled with its Rust type when Rust could not infer
+    /// the C type from context: a value outside `i32` (Rust's default) would
+    /// either not compile or change value.
+    fn int_literal(&self, value: i64, ty: TypeId) -> RExpr {
+        let out_of_range = value > i64::from(i32::MAX) || value < i64::from(i32::MIN);
+        // An unsigned value stored as a negative bit pattern (a 64-bit constant
+        // above `i64::MAX`) needs its type as well, so it prints unsigned.
+        let negative_unsigned = value < 0 && is_unsigned(self.program, ty);
+        match self.rust_type(ty) {
+            Ok(rust) if out_of_range || negative_unsigned => RExpr::typed_int(value, rust),
+            _ => RExpr::int(value),
+        }
+    }
+
+    /// An expression that Rust cannot type on its own: the receiver of a
+    /// method call (E0689) or the operand of a unary operator, where the
+    /// surrounding type would otherwise be inferred into the literal.
+    fn typed(&self, expr: RExpr, ty: TypeId) -> RExpr {
+        match (expr, self.rust_type(ty)) {
+            (
+                RExpr::Int {
+                    value,
+                    suffix: None,
+                },
+                Ok(rust),
+            ) => RExpr::typed_int(value, rust),
+            (expr, _) => expr,
+        }
+    }
+
     fn cast(&self, to: TypeId, expr: &Expr) -> Result<RExpr, TranslateError> {
         if is_bool(self.program, to) {
             return self.condition(expr);
@@ -1052,10 +1255,32 @@ impl<'a> Translator<'a> {
             }
             return self.expr(expr);
         }
+        if let Some(Type::Pointer { pointee, is_const }) = self.program.types.canonical(to) {
+            // The one pointer conversion expressed here is adding const to the
+            // pointee, which Rust's coercion already does at the use site.
+            // Anything else changes what the pointer may reach.
+            if let Some(Type::Pointer { pointee: from, .. }) = self.program.types.canonical(expr.ty)
+            {
+                if *is_const && same_type(self.program, *from, *pointee) {
+                    return self.expr(expr);
+                }
+            }
+            return Err(
+                self.error("a pointer cast that changes the pointee needs the M2 ownership model")
+            );
+        }
+        if self.is_pointer(expr.ty) {
+            return Err(self.error("a cast from a pointer is outside the M2 pointer step"));
+        }
         if let ExprKind::IntLit(value) = &expr.kind {
-            // Rust infers the target width from the binding or parameter, and
-            // an unsuffixed literal keeps the output free of redundant casts.
-            return Ok(RExpr::Int(*value));
+            // A cast of a constant is a constant: fold it, so a narrowing cast
+            // truncates the value instead of leaving Rust to infer a width
+            // (`(unsigned char)300` is 44, not 300).
+            let bits = self.int_width(to)?;
+            return Ok(self.int_literal(
+                fold_integer_cast(*value, bits, !is_unsigned(self.program, to)),
+                to,
+            ));
         }
         if matches!(
             self.program.types.get(to),
@@ -1070,33 +1295,275 @@ impl<'a> Translator<'a> {
         })
     }
 
+    /// The base of an index expression. C allows any array lvalue here: a
+    /// local, a slice parameter, a field of a value, or an element of an array
+    /// of arrays, which is itself an array in place.
     fn index_base(&self, base: &Expr) -> Result<RExpr, TranslateError> {
         let mut current = base;
-        loop {
-            match &current.kind {
-                ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => current = inner,
-                ExprKind::Local(name) => {
-                    if self.slice_by_pointer(name).is_some() {
-                        return Ok(RExpr::Path(name.clone()));
-                    }
-                    return match self.program.types.get(current.ty) {
-                        Some(Type::Array { .. }) => Ok(RExpr::Path(name.clone())),
-                        _ => Err(self.error(format!(
-                            "indexing {name} is only supported for arrays and slice parameters"
-                        ))),
-                    };
-                }
-                _ => return Err(self.error("unsupported index base")),
-            }
+        while let ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } = &current.kind {
+            current = inner;
         }
+        match &current.kind {
+            ExprKind::Local(name) => {
+                if self.slice_by_pointer(name).is_some() {
+                    return Ok(RExpr::Path(name.clone()));
+                }
+                if matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) {
+                    return Ok(RExpr::Path(name.clone()));
+                }
+                let mut message =
+                    format!("indexing {name} is only supported for arrays and slice parameters");
+                if let Some(reason) = self.unpaired_length(name) {
+                    message.push_str("; ");
+                    message.push_str(&reason);
+                }
+                Err(self.error(message))
+            }
+            ExprKind::Member { base, field, arrow } => {
+                if *arrow {
+                    return Err(self.error(
+                        "pointer member access is outside the M1 subset; use a slice or a value",
+                    ));
+                }
+                if !matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) {
+                    return Err(self.error(format!("field {field} is not an array")));
+                }
+                Ok(RExpr::Field {
+                    base: Box::new(self.expr(base)?),
+                    field: field.clone(),
+                })
+            }
+            ExprKind::Index { .. }
+                if matches!(
+                    self.program.types.canonical(current.ty),
+                    Some(Type::Array { .. })
+                ) =>
+            {
+                self.expr(current)
+            }
+            _ => Err(self.error("unsupported index base")),
+        }
+    }
+
+    /// A value used as an index, coerced to `usize`.
+    fn index_value(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
+        let lowered = self.value(expr, expr.ty)?;
+        if self.rust_type(expr.ty)? == "usize" {
+            return Ok(lowered);
+        }
+        Ok(RExpr::Cast {
+            expr: Box::new(lowered),
+            ty: "usize".to_string(),
+        })
     }
 
     fn rust_type(&self, id: TypeId) -> Result<String, TranslateError> {
         match self.program.types.get(id) {
-            Some(Type::Pointer { .. }) => Err(self.error(
-                "a pointer type is only translated as a slice with a following size_t parameter",
-            )),
+            // A pointer to one object is a reference. The slice pair is
+            // handled before this point, so reaching here means no length
+            // follows and the pointee is a single value.
+            Some(Type::Pointer { pointee, is_const }) => {
+                if matches!(
+                    self.program.types.canonical(*pointee),
+                    Some(Type::Pointer { .. })
+                ) {
+                    return Err(self.error("a pointer to a pointer needs the M2 ownership model"));
+                }
+                let element =
+                    type_name(self.program, *pointee).map_err(|message| self.error(message))?;
+                Ok(format!(
+                    "{}{element}",
+                    if *is_const { "&" } else { "&mut " }
+                ))
+            }
             _ => type_name(self.program, id).map_err(|message| self.error(message)),
+        }
+    }
+
+    fn is_pointer(&self, id: TypeId) -> bool {
+        matches!(self.program.types.canonical(id), Some(Type::Pointer { .. }))
+    }
+
+    fn is_mutable_pointer(&self, id: TypeId) -> bool {
+        matches!(
+            self.program.types.canonical(id),
+            Some(Type::Pointer {
+                is_const: false,
+                ..
+            })
+        )
+    }
+
+    /// The Rust form of a C slice argument: the borrow of `arg`, bounded by
+    /// the call's length argument.
+    ///
+    /// A callee taking `(const T *a, size_t n)` reads `n` elements wherever
+    /// they start, so `sum(a, 2)` on a three-element array is `&a[..2]`, and
+    /// `sum(&a[1], 2)` is `&a[1..][..2]`. Passing the whole array would hand
+    /// the callee a longer slice than the C call did.
+    fn slice_reference(
+        &self,
+        arg: &Expr,
+        expected: TypeId,
+        len: &Expr,
+    ) -> Result<RExpr, TranslateError> {
+        let inner = unwrap_casts(arg);
+        let op = if self.is_mutable_pointer(expected) {
+            "&mut"
+        } else {
+            "&"
+        };
+        let length = Box::new(self.index_value(len)?);
+        if matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Array { .. })
+        ) {
+            return Ok(RExpr::Unary {
+                op,
+                expr: Box::new(RExpr::Index {
+                    base: Box::new(self.expr(inner)?),
+                    index: Box::new(RExpr::Range {
+                        start: None,
+                        end: Some(length),
+                    }),
+                }),
+            });
+        }
+        // `&a[i]` is C's way of starting at element `i`; slicing the rest and
+        // then the first `n` elements evaluates `i` once.
+        if let ExprKind::Unary {
+            op: unary_op,
+            operand,
+            ..
+        } = &inner.kind
+        {
+            if unary_op == "&" {
+                if let ExprKind::Index { base, index } = &unwrap_casts(operand).kind {
+                    return Ok(RExpr::Unary {
+                        op,
+                        expr: Box::new(RExpr::Index {
+                            base: Box::new(RExpr::Index {
+                                base: Box::new(self.index_base(base)?),
+                                index: Box::new(RExpr::Range {
+                                    start: Some(Box::new(self.index_value(index)?)),
+                                    end: None,
+                                }),
+                            }),
+                            index: Box::new(RExpr::Range {
+                                start: None,
+                                end: Some(length),
+                            }),
+                        }),
+                    });
+                }
+            }
+        }
+        // A pointer parameter is already a slice; it still has to be
+        // narrowed to the count this call passes.
+        let slice = self.value(arg, expected)?;
+        Ok(RExpr::Unary {
+            op,
+            expr: Box::new(RExpr::Index {
+                base: Box::new(slice),
+                index: Box::new(RExpr::Range {
+                    start: None,
+                    end: Some(length),
+                }),
+            }),
+        })
+    }
+
+    fn decayed_reference(
+        &self,
+        arg: &Expr,
+        expected: TypeId,
+    ) -> Result<Option<RExpr>, TranslateError> {
+        if !self.is_pointer(expected) {
+            return Ok(None);
+        }
+        let inner = unwrap_casts(arg);
+        if !matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Array { .. })
+        ) {
+            return Ok(None);
+        }
+        let op = if self.is_mutable_pointer(expected) {
+            "&mut"
+        } else {
+            "&"
+        };
+        Ok(Some(RExpr::Unary {
+            op,
+            expr: Box::new(RExpr::Index {
+                base: Box::new(self.expr(inner)?),
+                index: Box::new(RExpr::int(0)),
+            }),
+        }))
+    }
+
+    /// Copying a pointer in C does not consume it. A Rust `&mut` is moved when
+    /// it is passed or assigned, so a place that already holds one is
+    /// reborrowed and the holder keeps its pointer for the next use.
+    /// Record that a mutable pointer local borrows a place, and refuse a
+    /// second borrow of the same place.
+    ///
+    /// Rust allows one live `&mut` per place; C does not count. The two ways a
+    /// pointer local comes to hold one are `&x` and a copy of another pointer,
+    /// which lowers to `&mut *p`.
+    fn track_borrow(&self, init: &Expr) -> Result<(), TranslateError> {
+        let inner = unwrap_casts(init);
+        if let ExprKind::Unary { op, operand, .. } = &inner.kind {
+            if op == "&" {
+                if let Some(root) = root_local(operand) {
+                    if !self.borrowed.borrow_mut().insert(root.to_string()) {
+                        return Err(self.error(format!(
+                            "{root} is borrowed as a mutable pointer twice; the M2 ownership model is needed"
+                        )));
+                    }
+                }
+                return Ok(());
+            }
+        }
+        if !matches!(
+            self.program.types.canonical(inner.ty),
+            Some(Type::Pointer { .. })
+        ) {
+            return Ok(());
+        }
+        if let ExprKind::Local(name) = &inner.kind {
+            let key = format!("*{name}");
+            if !self.borrowed.borrow_mut().insert(key) {
+                return Err(self.error(format!(
+                    "{name} is reborrowed as a mutable pointer twice; the M2 ownership model is needed"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn reborrow(&self, value: RExpr, ty: TypeId) -> RExpr {
+        if self.is_mutable_pointer(ty)
+            && matches!(
+                value,
+                RExpr::Path(_) | RExpr::Field { .. } | RExpr::Index { .. }
+            )
+        {
+            RExpr::Unary {
+                op: "&mut",
+                expr: Box::new(RExpr::Unary {
+                    op: "*",
+                    expr: Box::new(value),
+                }),
+            }
+        } else {
+            value
         }
     }
 
@@ -1116,6 +1583,35 @@ impl<'a> Translator<'a> {
         }
     }
 
+    /// Why a pointer parameter was not paired with a length, when it has one:
+    /// only the parameters before the first `size_t` form a slice group.
+    fn unpaired_length(&self, name: &str) -> Option<String> {
+        let function = self.program.function_named(self.function)?;
+        let params = &function.signature.params;
+        let index = params
+            .iter()
+            .position(|param| param.name.as_deref() == Some(name))?;
+        if let Some(length) = params[index + 1..]
+            .iter()
+            .position(|param| is_size_t(self.program, param.ty))
+        {
+            // The pair is adjacent exactly when the next parameter is the length.
+            return Some(if length == 0 {
+                "a second (pointer, length) pair needs the M2 extent analysis".to_string()
+            } else {
+                "a length that does not immediately follow its pointer needs the M2 extent analysis"
+                    .to_string()
+            });
+        }
+        if params[..index]
+            .iter()
+            .any(|param| is_size_t(self.program, param.ty))
+        {
+            return Some("a length before its pointer needs the M2 extent analysis".to_string());
+        }
+        None
+    }
+
     fn slice_by_pointer(&self, name: &str) -> Option<&SlicePlan> {
         self.slices.iter().find(|plan| plan.pointer == name)
     }
@@ -1124,12 +1620,27 @@ impl<'a> Translator<'a> {
         self.slices.iter().find(|plan| plan.length == name)
     }
 
-    fn length_parameter_is_used(&self, block: &Block, name: &str) -> bool {
-        !uses_local(block, name)
-    }
-
     fn error(&self, message: impl Into<String>) -> TranslateError {
         TranslateError::new(self.function, message)
+    }
+}
+
+/// The C value of a constant after a cast to `bits`-wide `signed`, which is
+/// what a cast of a literal folds to.
+fn fold_integer_cast(value: i64, bits: u64, signed: bool) -> i64 {
+    let bits = bits.min(64) as u32;
+    if bits == 0 {
+        return value;
+    }
+    if bits == 64 {
+        return value;
+    }
+    let mask = (1u64 << bits) - 1;
+    let raw = (value as u64) & mask;
+    if signed && raw >> (bits - 1) == 1 {
+        (raw | !mask) as i64
+    } else {
+        raw as i64
     }
 }
 
@@ -1160,7 +1671,7 @@ fn type_name(program: &Program, id: TypeId) -> Result<String, String> {
             }
         }
         Some(Type::Pointer { .. }) => Err(
-            "a pointer type is only translated as a slice with a following size_t parameter"
+            "a pointer in this position (a field, an array element or a return type) needs the M2 ownership model"
                 .to_string(),
         ),
         Some(Type::Unknown { spelling }) => Err(format!("unknown type {spelling}")),
@@ -1169,10 +1680,10 @@ fn type_name(program: &Program, id: TypeId) -> Result<String, String> {
 }
 
 fn zero_value(program: &Program, id: TypeId) -> Result<RExpr, String> {
-    match program.types.get(id) {
+    match program.types.canonical(id) {
         Some(Type::Bool) => Ok(RExpr::Bool(false)),
         Some(Type::Char { .. }) | Some(Type::Int { .. }) | Some(Type::Enum { .. }) => {
-            Ok(RExpr::Int(0))
+            Ok(RExpr::int(0))
         }
         Some(Type::Float { .. }) => Ok(RExpr::Float(0.0)),
         Some(Type::Array { elem, len }) => Ok(RExpr::Repeat {
@@ -1319,7 +1830,185 @@ fn collect_expr_assignments(expr: &Expr, names: &mut BTreeSet<String>) {
     }
 }
 
+/// Locals and parameters whose address is taken as a mutable pointer: the
+/// borrow is `&mut`, so the binding has to be `mut` even when nothing assigns
+/// it directly.
+fn collect_mutable_borrows(program: &Program, block: &Block, names: &mut BTreeSet<String>) {
+    for stmt in &block.stmts {
+        collect_stmt_borrows(program, stmt, names);
+    }
+}
+
+fn collect_stmt_borrows(program: &Program, stmt: &Stmt, names: &mut BTreeSet<String>) {
+    match &stmt.kind {
+        StmtKind::Decl { init, .. } => {
+            if let Some(init) = init {
+                collect_expr_borrows(program, init, names);
+            }
+        }
+        StmtKind::Expr(expr) => collect_expr_borrows(program, expr, names),
+        StmtKind::Return(Some(expr)) => collect_expr_borrows(program, expr, names),
+        StmtKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_borrows(program, cond, names);
+            collect_mutable_borrows(program, then_branch, names);
+            if let Some(else_branch) = else_branch {
+                collect_mutable_borrows(program, else_branch, names);
+            }
+        }
+        StmtKind::While { cond, body } => {
+            collect_expr_borrows(program, cond, names);
+            collect_mutable_borrows(program, body, names);
+        }
+        StmtKind::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
+            if let Some(init) = init {
+                collect_stmt_borrows(program, init, names);
+            }
+            if let Some(cond) = cond {
+                collect_expr_borrows(program, cond, names);
+            }
+            if let Some(step) = step {
+                collect_expr_borrows(program, step, names);
+            }
+            collect_mutable_borrows(program, body, names);
+        }
+        StmtKind::DoWhile { body, cond } => {
+            collect_mutable_borrows(program, body, names);
+            collect_expr_borrows(program, cond, names);
+        }
+        StmtKind::Switch { scrutinee, cases } => {
+            collect_expr_borrows(program, scrutinee, names);
+            for case in cases {
+                collect_mutable_borrows(program, &case.body, names);
+            }
+        }
+        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Empty => {}
+    }
+}
+
+fn collect_expr_borrows(program: &Program, expr: &Expr, names: &mut BTreeSet<String>) {
+    match &expr.kind {
+        ExprKind::Unary { op, operand, .. } => {
+            if op == "&"
+                && matches!(
+                    program.types.canonical(expr.ty),
+                    Some(Type::Pointer {
+                        is_const: false,
+                        ..
+                    })
+                )
+            {
+                if let Some(name) = root_local(operand) {
+                    names.insert(name.to_string());
+                }
+            }
+            collect_expr_borrows(program, operand, names);
+        }
+        ExprKind::Binary { lhs, rhs, .. }
+        | ExprKind::Assign { lhs, rhs, .. }
+        | ExprKind::Index {
+            base: lhs,
+            index: rhs,
+        } => {
+            collect_expr_borrows(program, lhs, names);
+            collect_expr_borrows(program, rhs, names);
+        }
+        ExprKind::Member { base, .. } => collect_expr_borrows(program, base, names),
+        ExprKind::Cond {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_borrows(program, cond, names);
+            collect_expr_borrows(program, then_branch, names);
+            collect_expr_borrows(program, else_branch, names);
+        }
+        ExprKind::InitList(elems) => {
+            for elem in elems {
+                collect_expr_borrows(program, elem, names);
+            }
+        }
+        ExprKind::Call { callee, args } => {
+            // An array argument becomes `&mut arr` or `&mut arr[0]`, so the
+            // array's root binding needs `mut` like any other mutable borrow.
+            if let Callee::Direct(id) = callee {
+                if let Some(function) = program.function(id) {
+                    for (index, arg) in args.iter().enumerate() {
+                        let Some(param) = function.signature.params.get(index) else {
+                            continue;
+                        };
+                        if !is_mutable_pointer_type(program, param.ty) {
+                            continue;
+                        }
+                        let inner = unwrap_casts(arg);
+                        if !matches!(program.types.canonical(inner.ty), Some(Type::Array { .. })) {
+                            continue;
+                        }
+                        if let Some(name) = root_local(inner) {
+                            names.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+            for arg in args {
+                collect_expr_borrows(program, arg, names);
+            }
+        }
+        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => {
+            collect_expr_borrows(program, expr, names);
+        }
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Null
+        | ExprKind::Local(_)
+        | ExprKind::Global(_)
+        | ExprKind::EnumConst { .. }
+        | ExprKind::Unsupported(_) => {}
+    }
+}
+
+/// The expression under parentheses and casts, which is where C hides the
+/// decay of an array argument.
+fn unwrap_casts(expr: &Expr) -> &Expr {
+    let mut current = expr;
+    while let ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } = &current.kind {
+        current = inner;
+    }
+    current
+}
+
+fn is_mutable_pointer_type(program: &Program, id: TypeId) -> bool {
+    matches!(
+        program.types.canonical(id),
+        Some(Type::Pointer {
+            is_const: false,
+            ..
+        })
+    )
+}
+
 /// The local whose storage an assignment writes through fields and indexes.
+/// The place a mutable borrow of `expr` would come from, for the aliasing
+/// check at a call: a pointer local, or the object behind `&`.
+fn mutable_root(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Local(name) => Some(name.clone()),
+        ExprKind::Unary { op, operand, .. } if op == "&" => root_local(operand).map(str::to_string),
+        _ => root_local(expr).map(str::to_string),
+    }
+}
+
 fn root_local(expr: &Expr) -> Option<&str> {
     match &expr.kind {
         ExprKind::Local(name) => Some(name),
@@ -1388,107 +2077,12 @@ fn stmt_has_continue(stmt: &Stmt) -> bool {
     }
 }
 
-fn uses_local(block: &Block, name: &str) -> bool {
-    block.stmts.iter().any(|stmt| stmt_uses_local(stmt, name))
-}
-
-fn stmt_uses_local(stmt: &Stmt, name: &str) -> bool {
-    match &stmt.kind {
-        StmtKind::Decl { init, .. } => init.as_ref().is_some_and(|e| expr_uses_local(e, name)),
-        StmtKind::Expr(expr) => expr_uses_local(expr, name),
-        StmtKind::If {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            expr_uses_local(cond, name)
-                || uses_local(then_branch, name)
-                || else_branch.as_ref().is_some_and(|b| uses_local(b, name))
-        }
-        StmtKind::While { cond, body } => expr_uses_local(cond, name) || uses_local(body, name),
-        StmtKind::For {
-            init,
-            cond,
-            step,
-            body,
-        } => {
-            init.as_ref().is_some_and(|s| stmt_uses_local(s, name))
-                || cond.as_ref().is_some_and(|e| expr_uses_local(e, name))
-                || step.as_ref().is_some_and(|e| expr_uses_local(e, name))
-                || uses_local(body, name)
-        }
-        StmtKind::DoWhile { body, cond } => uses_local(body, name) || expr_uses_local(cond, name),
-        StmtKind::Switch { scrutinee, cases } => {
-            expr_uses_local(scrutinee, name)
-                || cases.iter().any(|case| uses_local(&case.body, name))
-        }
-        StmtKind::Return(Some(value)) => expr_uses_local(value, name),
-        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Empty => false,
-    }
-}
-
-fn expr_uses_local(expr: &Expr, name: &str) -> bool {
-    match &expr.kind {
-        ExprKind::Local(other) => other == name,
-        ExprKind::Unary { operand, .. } => expr_uses_local(operand, name),
-        ExprKind::Binary { lhs, rhs, .. }
-        | ExprKind::Assign { lhs, rhs, .. }
-        | ExprKind::Index {
-            base: lhs,
-            index: rhs,
-        } => expr_uses_local(lhs, name) || expr_uses_local(rhs, name),
-        ExprKind::Member { base, .. } => expr_uses_local(base, name),
-        ExprKind::Cond {
-            cond,
-            then_branch,
-            else_branch,
-        } => {
-            expr_uses_local(cond, name)
-                || expr_uses_local(then_branch, name)
-                || expr_uses_local(else_branch, name)
-        }
-        ExprKind::InitList(elems) => elems.iter().any(|e| expr_uses_local(e, name)),
-        ExprKind::Call { args, .. } => args.iter().any(|e| expr_uses_local(e, name)),
-        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => expr_uses_local(expr, name),
-        ExprKind::IntLit(_)
-        | ExprKind::FloatLit(_)
-        | ExprKind::StringLit(_)
-        | ExprKind::CharLit(_)
-        | ExprKind::BoolLit(_)
-        | ExprKind::Null
-        | ExprKind::Global(_)
-        | ExprKind::EnumConst { .. }
-        | ExprKind::Unsupported(_) => false,
-    }
-}
-
 fn is_unit(program: &Program, id: TypeId) -> bool {
     matches!(program.types.canonical(id), Some(Type::Void))
 }
 
 fn is_bool(program: &Program, id: TypeId) -> bool {
     matches!(program.types.canonical(id), Some(Type::Bool))
-}
-
-fn is_size_t(program: &Program, id: TypeId) -> bool {
-    match program.types.get(id) {
-        Some(Type::Named { name, .. }) if name == "size_t" => true,
-        Some(ty) => matches!(
-            ty,
-            Type::Int { bits, signed: false, .. } if u16::from(*bits) == u16::from(program.target.size_t_bits)
-        ),
-        None => false,
-    }
-}
-
-fn is_slice_element(program: &Program, id: TypeId) -> bool {
-    matches!(
-        program.types.get(id),
-        Some(Type::Bool)
-            | Some(Type::Char { .. })
-            | Some(Type::Int { .. })
-            | Some(Type::Float { .. })
-    )
 }
 
 fn is_unsigned(program: &Program, id: TypeId) -> bool {

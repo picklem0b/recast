@@ -11,6 +11,7 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/JSONCompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -27,6 +28,32 @@ namespace {
 using llvm::json::Array;
 using llvm::json::Object;
 using llvm::json::Value;
+
+/// The TIR stores one `i64` per constant. A signed constant keeps its sign, an
+/// unsigned constant keeps its value (so `4000000000u` is not sign-extended to
+/// a negative number), and an unsigned 64-bit constant that does not fit `i64`
+/// keeps its bit pattern, which the translator renders back at its own width.
+std::int64_t constant_value(const llvm::APInt &value, bool is_unsigned) {
+  return is_unsigned ? static_cast<std::int64_t>(value.getZExtValue())
+                     : value.getSExtValue();
+}
+
+std::int64_t constant_value(const llvm::APSInt &value) {
+  return constant_value(value, value.isUnsigned());
+}
+
+/// The exported name of a record or enum: its own name, or the typedef that
+/// declares an anonymous one. Empty when the tag has neither, which the type
+/// table reports as unknown instead of as a type with no name.
+std::string tag_name(const clang::TagDecl *decl) {
+  std::string name = decl->getNameAsString();
+  if (name.empty()) {
+    if (const auto *typedef_decl = decl->getTypedefNameForAnonDecl()) {
+      name = typedef_decl->getNameAsString();
+    }
+  }
+  return name;
+}
 
 struct AstState {
   std::vector<Object> units;
@@ -91,15 +118,23 @@ Value type_json(clang::QualType type, clang::ASTContext &context) {
     return Value(std::move(named));
   }
   if (const auto *enum_type = type->getAs<clang::EnumType>()) {
+    std::string name = tag_name(enum_type->getDecl());
+    if (name.empty()) {
+      return Value(scalar("unknown", "anonymous enum"));
+    }
     Object node;
     node["kind"] = "enum";
-    node["name"] = enum_type->getDecl()->getNameAsString();
+    node["name"] = name;
     return Value(std::move(node));
   }
   if (const auto *record_type = type->getAs<clang::RecordType>()) {
+    std::string name = tag_name(record_type->getDecl());
+    if (name.empty()) {
+      return Value(scalar("unknown", "anonymous record"));
+    }
     Object node;
     node["kind"] = "record";
-    node["name"] = record_type->getDecl()->getNameAsString();
+    node["name"] = name;
     return Value(std::move(node));
   }
   if (type->isIntegerType()) {
@@ -246,7 +281,7 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
 
     Array cases;
     std::optional<size_t> current;
-    bool nested_label = false;
+    bool unattributed = false;
 
     auto begin_case = [&](std::optional<int64_t> value) {
       Object entry;
@@ -263,7 +298,9 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
 
     // A switch body is a list of statements where each case owns the
     // statements that follow it. Nested `case` labels (empty fallthrough) are
-    // separate arms with empty bodies.
+    // separate arms with empty bodies. clang keeps only the first statement of
+    // an arm under the label and leaves the rest as siblings of it, so a
+    // statement belongs to an arm when a label precedes it in the body.
     std::function<void(const clang::Stmt *, bool)> append = [&](const clang::Stmt *child,
                                                                bool inside_case) {
       if (child == nullptr) {
@@ -271,7 +308,8 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
       }
       if (auto *case_stmt = clang::dyn_cast<clang::CaseStmt>(child)) {
         auto value = case_stmt->getLHS()->EvaluateKnownConstInt(context);
-        begin_case(value.getSExtValue());
+        bool is_unsigned = case_stmt->getLHS()->getType()->isUnsignedIntegerOrEnumerationType();
+        begin_case(constant_value(value, is_unsigned));
         append(case_stmt->getSubStmt(), true);
         return;
       }
@@ -282,12 +320,15 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
       }
       if (auto *compound = clang::dyn_cast<clang::CompoundStmt>(child)) {
         for (const clang::Stmt *inner : compound->body()) {
-          append(inner, inside_case);
+          append(inner, inside_case || current.has_value());
         }
         return;
       }
       if (!inside_case || !current.has_value()) {
-        nested_label = true;
+        // A statement before the first label, or one the arms do not own.
+        // Translating the surrounding arms would silently drop it, and
+        // document 06 section 10.2 flags such a switch.
+        unattributed = true;
         return;
       }
       if (auto *array = cases[*current].getAsObject()->getArray("stmts")) {
@@ -296,9 +337,15 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
     };
 
     append(switch_stmt->getBody(), false);
-    (void)nested_label;
+    if (unattributed) {
+      Object unsupported;
+      unsupported["kind"] = "unsupported";
+      unsupported["spelling"] = "switch with a statement outside every case";
+      unsupported["span"] = span_json(switch_stmt->getBeginLoc(), context);
+      return unsupported;
+    }
 
-    // A case falls through when its last statement cannot transfer control.
+    // A case falls through when its last statement can reach the next case.
     for (size_t index = 0; index + 1 < cases.size(); ++index) {
       auto *entry = cases[index].getAsObject();
       auto *stmts = entry->getArray("stmts");
@@ -308,7 +355,9 @@ Object stmt_json(const clang::Stmt *stmt, clang::ASTContext &context) {
         std::optional<llvm::StringRef> kind = last.getAsObject()
                                                  ? last.getAsObject()->getString("kind")
                                                  : std::nullopt;
-        falls = !(kind && (*kind == "break" || *kind == "return"));
+        // `continue` leaves the switch for the enclosing loop, so the next
+        // case is not reached and the arm does not fall through.
+        falls = !(kind && (*kind == "break" || *kind == "return" || *kind == "continue"));
       }
       (*entry)["falls_through"] = falls;
     }
@@ -358,7 +407,8 @@ Object expr_json(const clang::Expr *expr, clang::ASTContext &context) {
   if (auto *literal = clang::dyn_cast<clang::IntegerLiteral>(expr)) {
     Object node;
     node["kind"] = "int_lit";
-    node["value"] = literal->getValue().getSExtValue();
+    bool is_unsigned = expr->getType()->isUnsignedIntegerOrEnumerationType();
+    node["value"] = constant_value(literal->getValue(), is_unsigned);
     node["type"] = type_json(expr->getType(), context);
     return node;
   }
@@ -547,16 +597,21 @@ public:
       : context(context), output(output) {}
 
   bool VisitRecordDecl(clang::RecordDecl *record) {
-    if (!record->isCompleteDefinition() || record->isAnonymousStructOrUnion() ||
-        record->getDeclContext()->isFunctionOrMethod()) {
+    if (!record->isCompleteDefinition() || record->getDeclContext()->isFunctionOrMethod()) {
       return true;
     }
     auto &source = context.getSourceManager();
     if (!source.isWrittenInMainFile(record->getLocation())) {
       return true;
     }
+    // A record declared only through a typedef names itself after the
+    // typedef; one that has neither is not representable.
+    std::string name = tag_name(record);
+    if (name.empty()) {
+      return true;
+    }
     Object node;
-    node["name"] = record->getNameAsString();
+    node["name"] = name;
     clang::QualType self = context.getRecordType(record);
     node["size"] = static_cast<int64_t>(context.getTypeSizeInChars(self).getQuantity());
     node["align"] = static_cast<int64_t>(context.getTypeAlignInChars(self).getQuantity());
@@ -575,22 +630,26 @@ public:
   }
 
   bool VisitEnumDecl(clang::EnumDecl *item) {
-    if (!item->isCompleteDefinition() || item->getName().empty()) {
+    if (!item->isCompleteDefinition()) {
       return true;
     }
     auto &source = context.getSourceManager();
     if (!source.isWrittenInMainFile(item->getLocation())) {
       return true;
     }
+    std::string name = tag_name(item);
+    if (name.empty()) {
+      return true;
+    }
     Object node;
-    node["name"] = item->getNameAsString();
+    node["name"] = name;
     node["underlying"] = type_json(item->getIntegerType(), context);
     node["span"] = span_json(item->getLocation(), context);
     Array variants;
     for (const clang::EnumConstantDecl *constant : item->enumerators()) {
       Object entry;
       entry["name"] = constant->getNameAsString();
-      entry["value"] = constant->getInitVal().getSExtValue();
+      entry["value"] = constant_value(constant->getInitVal());
       variants.push_back(std::move(entry));
     }
     node["variants"] = std::move(variants);

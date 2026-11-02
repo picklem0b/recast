@@ -46,12 +46,15 @@ recast/
     fast.sh                     # no-Clang build, determinism and generated-crate check
     m0-exit.sh                  # M0 exit criteria through the real exporter
     m1-exit.sh                  # M1 corpus, property and mutation criteria
+    m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
+    m2-refusals.sh              # the constructs outside the current M2 step are refused
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
     golden/                     # expected translation output per case
   corpus/
     l0/                         # committed L0 teaching programs and case descriptions
+    m2/                         # committed M2 programs, one directory per build point
   models/                       # library models (populated from M2)
   benchmarks/                   # benchmark protocol and manifests
   docs/
@@ -171,7 +174,7 @@ The repository is Apache-2.0. Do not add per-file license headers unless a depen
 
 ### Versions and tags
 
-`spec-v1.0.x` tags the specification set. `v1.0.x` tags implementation states. Tags are annotated and their messages start with the tag name. A tag is created only after its exit criteria pass.
+`spec-v1.0.x` tags the specification set. `v1.0.x` tags implementation states. Tags are annotated and their messages start with the tag name. A tag is created only after its exit criteria pass, and it publishes exactly one commit — a build point, a repair or a document state. Nothing is batched into a tag: a step that is worth a commit is worth its own tag.
 
 ### Commits
 
@@ -192,3 +195,42 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.1.12`            | M1 references point at the page tags.                                    |
 | `v1.1.13`            | M1 audit repairs.                                                        |
 | `v1.1.14`            | M1 repair note: the signed-`char` check.                                 |
+| `v1.1.15`            | M1 repair: literal typing.                                               |
+| `v1.1.16`            | M1 repair: a constant cast folds.                                        |
+| `v1.1.17`            | M1 repair: a void cast discards.                                         |
+| `v1.1.18`            | M1 repair: a cast before a comparison.                                   |
+| `v1.1.19`            | M1 repair: unsigned constants.                                           |
+| `v1.1.20`            | M1 repair: every statement of a switch arm.                              |
+| `v1.1.21`            | M1 repair: `continue` leaves the switch.                                 |
+| `v1.1.22`            | M1 repair: typedef record names.                                         |
+| `v1.1.23`            | M1 repair: array arguments in the V2 driver.                             |
+| `v1.1.24`            | M1 repair: index bases.                                                  |
+| `v1.1.25`            | M1 repair: compound shifts.                                              |
+| `v1.1.26`            | M1 repair: typedef initializers.                                         |
+| `v1.1.27`            | M1 repair: typedef spellings in the V2 driver.                           |
+| `v1.1.28`            | M1 repair: style of the repair set.                                      |
+| `v1.1.29`            | M1 audit: the third pass recorded.                                       |
+| `v1.2.0`             | M2 opens: the workspace version is 1.2.0.                                |
+| `v1.2.1`             | M2: a pointer to one object is a reference.                              |
+| `v1.2.2`             | M2: the V2 driver owns and observes a pointer argument.                  |
+| `v1.2.3`             | M2: the pointer corpus and `ci/m2-corpus.sh`.                            |
+| `v1.2.4`             | M2: `ci/m2-refusals.sh` checks the refusal list.                         |
+| `v1.2.5`             | M2: the audit records the pointer step.                                  |
+| `v1.1.30`            | M1 audit: the tag lists include `v1.1.29`.                               |
+| `v1.2.6`             | M2 repair: reborrow at a call, refuse a parameter reassignment.          |
+| `v1.2.7`             | M2 repair: a slice call drops the length argument.                       |
+| `v1.2.8`             | M2 repair: an array argument decays at the call.                         |
+| `v1.2.9`             | M2 repair: a slice parameter read as one object is refused.              |
+| `v1.2.10`            | M2 repair: slice length, keyword names and aliased mutable calls.        |
+| `v1.2.11`            | M2 audit: the tag lists include `v1.2.10`.                               |
+| `v1.2.12`            | M2 repair: a slice call carries its length.                              |
+| `v1.2.13`            | M2 repair: a mutable slice argument is a place the driver owns.          |
+| `v1.2.14`            | M2 audit: the tag lists include `v1.2.13`.                               |
+| `v1.2.15`            | M2 repair: a later slice is narrowed to the call's count.                |
+| `v1.2.16`            | M2 audit: the tag lists include `v1.2.15`.                               |
+| `v1.2.17`            | M2 repair: an unpaired length is refused with the shape found.           |
+| `v1.2.18`            | M2 audit: the tag lists include `v1.2.17`.                               |
+| `v1.2.19`            | M2 repair: a second mutable borrow and a pointer to a pointer.           |
+| `v1.2.20`            | M2 audit: the tag lists include `v1.2.19`.                               |
+| `v1.2.21`            | M2 repair: an empty mutable string is a null pointer with count zero.    |
+| `v1.2.22`            | M2 audit: the tag lists include `v1.2.21`.                               |

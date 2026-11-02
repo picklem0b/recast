@@ -43,3 +43,31 @@ int field_sum(struct point a, struct point b) {
     struct point total = {a.x + b.x, a.y + b.y};
     return total.x * 10 + total.y;
 }
+
+/* The typedef forms: an anonymous record named by its typedef, a typedef'd
+   integer, and an anonymous enum. */
+typedef struct {
+    int a;
+    int b;
+} pair_t;
+
+typedef unsigned int count_t;
+
+typedef enum { RED, GREEN, BLUE } color_t;
+
+pair_t make_pair(int a, int b) {
+    pair_t p = {a, b};
+    return p;
+}
+
+int pair_sum(pair_t p) {
+    return p.a + p.b;
+}
+
+count_t twice(count_t n) {
+    return n * 2;
+}
+
+int color_index(color_t c) {
+    return c == RED ? 0 : (c == GREEN ? 1 : 2);
+}

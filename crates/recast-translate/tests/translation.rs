@@ -100,6 +100,50 @@ fn mutable_parameters_and_c_comparison_values_compile() {
 }
 
 #[test]
+fn an_anonymous_typedef_record_keeps_its_name() {
+    let generated = source(include_str!("../../../tests/fixtures/ast/typedef.json"));
+    assert!(generated.contains("pub struct Pair"), "{generated}");
+    assert!(
+        generated.contains("pub fn sum(p: Pair) -> i32"),
+        "{generated}"
+    );
+    assert!(
+        generated.contains("pub fn make(a: i32, b: i32) -> Pair"),
+        "{generated}"
+    );
+    compile(&generated).expect("generated Rust compiles");
+}
+
+#[test]
+fn a_c_name_that_is_a_rust_keyword_is_refused() {
+    let json = include_str!("../../../tests/fixtures/ast/add.json")
+        .replace("\"name\":\"add\"", "\"name\":\"use\"");
+    let ast = Ast::from_json(&json).expect("fixture is a valid recast-ast/1 document");
+    let program = lower(&ast).expect("fixture lowers to TIR");
+    let error = translate(&program).expect_err("a keyword name is refused");
+    assert!(
+        error.message.contains(
+            "`use` is a Rust keyword, so a C name that collides with one needs the M2 rename pass"
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn one_pointer_passed_to_two_mutable_parameters_is_refused() {
+    let ast = Ast::from_json(include_str!("../../../tests/fixtures/ast/alias.json"))
+        .expect("fixture is a valid recast-ast/1 document");
+    let program = lower(&ast).expect("fixture lowers to TIR");
+    let error = translate(&program).expect_err("an aliased mutable call is refused");
+    assert!(
+        error.message.contains(
+            "p is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed"
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn translation_is_deterministic() {
     let json = include_str!("../../../tests/fixtures/ast/sum.json");
     assert_eq!(source(json), source(json));
