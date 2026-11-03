@@ -1,6 +1,15 @@
+![recast: verified C and C++ to Rust translation](docs/assets/banner.jpg)
+
 # recast
 
 **Verified C/C++ to Rust translation.** Ownership-aware, deterministic, and honest about what it proved.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/picklem0b/recast/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white)](https://github.com/picklem0b/recast/actions/workflows/ci.yml)
+![Rust 1.85](https://img.shields.io/badge/Rust-1.85-000000?logo=rust&logoColor=white)
+![C11](https://img.shields.io/badge/C-11-283593?logo=c&logoColor=white)
+![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
+![License Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-D22128?logo=apache&logoColor=white)
+[![Docs](https://img.shields.io/badge/Docs-specs%20and%20audits-4B5563?logo=readthedocs&logoColor=white)](docs/README.md)
 
 ## Status
 
