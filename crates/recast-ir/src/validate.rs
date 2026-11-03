@@ -613,12 +613,23 @@ impl<'a> Validator<'a> {
             }
             ExprKind::Member { base, field, arrow } => {
                 self.check_expr(base, function, scope, nodes, &format!("{path}.base"));
-                if *arrow {
-                    self.error(3, path, "pointer member access is outside the M1 subset");
-                }
-                let record = match self.program.types.canonical(base.ty) {
-                    Some(Type::Record { name }) => self.program.record(name),
-                    _ => None,
+                let record = if *arrow {
+                    // `p->f` reaches the record behind the pointer; the field
+                    // itself is an ordinary member of that record.
+                    match self.program.types.canonical(base.ty) {
+                        Some(Type::Pointer { pointee, .. }) => {
+                            match self.program.types.canonical(*pointee) {
+                                Some(Type::Record { name }) => self.program.record(name),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    match self.program.types.canonical(base.ty) {
+                        Some(Type::Record { name }) => self.program.record(name),
+                        _ => None,
+                    }
                 };
                 match record {
                     Some(record) if record.field(field).is_some() => {}
@@ -627,6 +638,7 @@ impl<'a> Validator<'a> {
                         format!("{path}.field"),
                         format!("record {} has no field {field}", record.name),
                     ),
+                    None if *arrow => self.error(3, path, "`->` needs a pointer to a record"),
                     None => self.error(1, path, "member access on a type that is not a record"),
                 }
             }

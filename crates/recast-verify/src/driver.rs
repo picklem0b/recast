@@ -240,10 +240,8 @@ pub(crate) fn arguments(
             arguments.r_args.push(pointer.r_arg);
             arguments.c_setup.push(pointer.c_setup);
             arguments.r_setup.push(pointer.r_setup);
-            if let (Some(c), Some(rust)) = (pointer.c_observed, pointer.r_observed) {
-                arguments.c_observed.push(c);
-                arguments.r_observed.push(rust);
-            }
+            arguments.c_observed.extend(pointer.c_observed);
+            arguments.r_observed.extend(pointer.r_observed);
         } else {
             let (c, rust) = value_argument(program, param.ty, value)?;
             arguments.c_args.push(c);
@@ -265,8 +263,8 @@ struct PointerArgument {
     r_setup: String,
     c_arg: String,
     r_arg: String,
-    c_observed: Option<String>,
-    r_observed: Option<String>,
+    c_observed: Vec<String>,
+    r_observed: Vec<String>,
 }
 
 /// A pointer to one scalar: the case value is the pointee's initial value. A
@@ -281,15 +279,40 @@ fn pointer_argument(
     let Some(Type::Pointer { pointee, is_const }) = program.types.canonical(ty) else {
         return Err(Error::Case("expected a pointer parameter".to_string()));
     };
-    let rust_type = rust_scalar(program, *pointee).ok_or_else(|| {
-        Error::Unsupported(
-            "a pointer whose pointee is not a scalar is the next M2 step".to_string(),
-        )
-    })?;
     let c_type = c_type(program, *pointee);
     let (c_value, r_value) = value_argument(program, *pointee, value)?;
     let name = format!("a{index}");
     let mutable = !*is_const;
+    if matches!(program.types.canonical(*pointee), Some(Type::Record { .. })) {
+        // A record behind a pointer is a place on both sides, so a write
+        // through the pointer reaches a field the driver can print afterwards.
+        let mut observed = Vec::new();
+        flatten_fields(program, *pointee, &name, &mut observed)?;
+        let mut c_observed = Vec::new();
+        let mut r_observed = Vec::new();
+        for (path, ty) in observed {
+            if rust_scalar(program, ty).is_none() {
+                return Err(Error::Unsupported(
+                    "a record field the driver cannot print is the next M2 step".to_string(),
+                ));
+            }
+            c_observed.push(format!("(long long)({path})"));
+            r_observed.push(format!("{path} as i64"));
+        }
+        return Ok(PointerArgument {
+            c_setup: format!("{c_type} {name} = {c_value}"),
+            r_setup: format!("let mut {name} = {r_value}"),
+            c_arg: format!("&{name}"),
+            r_arg: format!("&mut {name}"),
+            c_observed: if mutable { c_observed } else { Vec::new() },
+            r_observed: if mutable { r_observed } else { Vec::new() },
+        });
+    }
+    let rust_type = rust_scalar(program, *pointee).ok_or_else(|| {
+        Error::Unsupported(
+            "a pointer whose pointee is not a scalar or a record is the next M2 step".to_string(),
+        )
+    })?;
     Ok(PointerArgument {
         c_setup: format!("{c_type} {name} = {c_value}"),
         r_setup: if mutable {
@@ -303,8 +326,16 @@ fn pointer_argument(
         } else {
             format!("&{name}")
         },
-        c_observed: mutable.then(|| format!("(long long)({name})")),
-        r_observed: mutable.then(|| format!("{name} as i64")),
+        c_observed: if mutable {
+            vec![format!("(long long)({name})")]
+        } else {
+            Vec::new()
+        },
+        r_observed: if mutable {
+            vec![format!("{name} as i64")]
+        } else {
+            Vec::new()
+        },
     })
 }
 

@@ -98,12 +98,6 @@ int c(int *p) { return p ? 1 : 0; }
 C
 expect_refusal ptr_condition "a pointer used as a condition needs the M2 ownership model"
 
-snippet arrow <<'C'
-struct S { int x; };
-int field(struct S *s) { return s->x; }
-C
-expect_refusal arrow "pointer member access is outside the M1 subset"
-
 snippet union <<'C'
 union U { int i; char c; };
 int field(union U *u) { return u->i; }
