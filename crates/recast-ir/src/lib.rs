@@ -15,8 +15,8 @@ pub use dump::dump;
 pub use id::{ItemId, NodeId, TypeId};
 pub use program::{
     Block, Callee, Case, Endian, EnumDef, Enumerator, Expr, ExprKind, FieldDef, FileInfo, FnSig,
-    Function, Global, Linkage, Param, Program, Provenance, RecordDef, Span, Stmt, StmtKind, Target,
-    ValueCategory, SCHEMA_NAME, SCHEMA_VERSION,
+    Function, Global, Linkage, Param, Program, Provenance, RecordDef, RecordKind, Span, Stmt,
+    StmtKind, Target, ValueCategory, SCHEMA_NAME, SCHEMA_VERSION,
 };
 pub use slice::{is_size_t, is_slice_element, slice_group, SliceGroup};
 pub use types::{Type, TypeTable};

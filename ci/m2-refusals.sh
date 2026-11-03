@@ -98,11 +98,19 @@ int c(int *p) { return p ? 1 : 0; }
 C
 expect_refusal ptr_condition "a pointer used as a condition needs the M2 ownership model"
 
-snippet arrow <<'C'
-struct S { int x; };
-int field(struct S *s) { return s->x; }
+snippet union <<'C'
+union U { int i; char c; };
+int field(union U *u) { return u->i; }
 C
-expect_refusal arrow "pointer member access is outside the M1 subset"
+expect_refusal union "a union has overlapping fields, which needs the M2 layout model"
+
+# A record may hold a pointer, but a pointer field is where C's recursive
+# structures begin; emitting it as a borrowed field would be a lifetime claim.
+snippet record_pointer_field <<'C'
+struct Node { int value; struct Node *next; };
+int head(struct Node *n) { return n->value; }
+C
+expect_refusal record_pointer_field "a pointer in this position (a field, an array element or a return type) needs the M2 ownership model"
 
 snippet cast_pointee <<'C'
 int cast(void *p) { return *(int *)p; }
@@ -222,27 +230,6 @@ int both(int *a, int *b) { *a = 1; *b = 2; return *a + *b; }
 int f(int *p) { return both(p, p); }
 C
 expect_refusal alias_mutable 'p is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed'
-
-# A pointer parameter whose pointee is a record translates as a signature
-# (`p: &mut P`) but the V2 driver refuses to build a harness for it.
-snippet driver_record <<'C'
-struct P { int a; int b; };
-int first(struct P *p) { return 0; }
-C
-cat > "$work/driver_record/case.json" <<'JSON'
-{
-  "schema": "recast-case/1",
-  "calls": [
-    {
-      "function": "first",
-      "args": [
-        1
-      ]
-    }
-  ]
-}
-JSON
-expect_refusal driver_record "a pointer whose pointee is not a scalar is the next M2 step"
 
 if ((refused != checked)); then
   echo "$((checked - refused)) construct(s) were not refused" >&2

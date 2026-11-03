@@ -234,3 +234,7 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.20`            | M2 audit: the tag lists include `v1.2.19`.                               |
 | `v1.2.21`            | M2 repair: an empty mutable string is a null pointer with count zero.    |
 | `v1.2.22`            | M2 audit: the tag lists include `v1.2.21`.                               |
+| `v1.2.23`            | M2 repair: a union is refused by name.                                   |
+| `v1.2.24`            | M2 audit: the tag lists include `v1.2.23`.                               |
+| `v1.2.25`            | M2: a record behind a pointer, and a driver that observes its fields.    |
+| `v1.2.26`            | M2 audit: the tag lists include `v1.2.25`.                               |

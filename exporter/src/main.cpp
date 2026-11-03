@@ -612,6 +612,9 @@ public:
     }
     Object node;
     node["name"] = name;
+    // A union's fields overlap; the translator refuses one by name until the
+    // layout model can emit it, so the fact has to survive the export.
+    node["kind"] = record->isUnion() ? "union" : "struct";
     clang::QualType self = context.getRecordType(record);
     node["size"] = static_cast<int64_t>(context.getTypeSizeInChars(self).getQuantity());
     node["align"] = static_cast<int64_t>(context.getTypeAlignInChars(self).getQuantity());

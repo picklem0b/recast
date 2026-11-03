@@ -160,11 +160,21 @@ pub struct FieldDef {
     pub ty: TypeId,
 }
 
+/// Whether a record's fields occupy separate offsets or one storage unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordKind {
+    /// Fields at successive offsets.
+    Struct,
+    /// Fields at offset zero, overlapping.
+    Union,
+}
+
 /// A struct or union definition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordDef {
     pub id: ItemId,
     pub name: String,
+    pub kind: RecordKind,
     pub fields: Vec<FieldDef>,
     /// `sizeof` under the target, in bytes; zero when the exporter did not
     /// report a layout.
