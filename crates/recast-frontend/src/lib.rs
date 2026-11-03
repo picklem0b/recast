@@ -14,8 +14,8 @@ use std::fmt;
 
 use recast_ir::{
     Block, Callee, Case, Endian, EnumDef, Enumerator, Expr, ExprKind, FieldDef, FnSig, Function,
-    Global, ItemId, Linkage, NodeId, Param, Program, Provenance, RecordDef, Span, Stmt, StmtKind,
-    Target, Type, TypeId, ValueCategory,
+    Global, ItemId, Linkage, NodeId, Param, Program, Provenance, RecordDef, RecordKind, Span, Stmt,
+    StmtKind, Target, Type, TypeId, ValueCategory,
 };
 use recast_schema as schema;
 
@@ -161,6 +161,10 @@ impl Lowerer {
         self.program.records.push(RecordDef {
             id,
             name,
+            kind: match record.kind {
+                schema::RecordKind::Struct => RecordKind::Struct,
+                schema::RecordKind::Union => RecordKind::Union,
+            },
             fields,
             size: record.size,
             align: record.align,
