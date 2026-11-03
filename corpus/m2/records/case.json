@@ -1,0 +1,63 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    {
+      "function": "spread",
+      "args": [
+        {
+          "lo": 4,
+          "hi": 9
+        },
+        3
+      ]
+    },
+    {
+      "function": "spread",
+      "args": [
+        {
+          "lo": -2,
+          "hi": 5
+        },
+        -1
+      ]
+    },
+    {
+      "function": "width",
+      "args": [
+        {
+          "lo": 2,
+          "hi": 9
+        }
+      ]
+    },
+    {
+      "function": "width",
+      "args": [
+        {
+          "lo": -5,
+          "hi": -1
+        }
+      ]
+    },
+    {
+      "function": "span",
+      "args": []
+    },
+    {
+      "function": "spread_through",
+      "args": [
+        2,
+        7,
+        1
+      ]
+    },
+    {
+      "function": "spread_through",
+      "args": [
+        0,
+        0,
+        -3
+      ]
+    }
+  ]
+}

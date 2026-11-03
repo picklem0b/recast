@@ -916,10 +916,10 @@ impl<'a> Translator<'a> {
                 index: Box::new(self.index_value(index)?),
             }),
             ExprKind::Member { base, field, arrow } => {
+                // `p->f` is `p.f` through the reference: Rust's field access
+                // dereferences the reference the parameter already is.
                 if *arrow {
-                    return Err(self.error(
-                        "pointer member access is outside the M1 subset; use a slice or a value",
-                    ));
+                    self.check_arrow(base)?;
                 }
                 Ok(RExpr::Field {
                     base: Box::new(self.expr(base)?),
@@ -1301,6 +1301,23 @@ impl<'a> Translator<'a> {
         })
     }
 
+    /// Check that `->` reaches a record. The pointer itself is already a
+    /// reference in the emitted Rust, so the field access needs no dereference.
+    fn check_arrow(&self, base: &Expr) -> Result<(), TranslateError> {
+        let record = match self.program.types.canonical(base.ty) {
+            Some(Type::Pointer { pointee, .. }) => matches!(
+                self.program.types.canonical(*pointee),
+                Some(Type::Record { .. })
+            ),
+            _ => false,
+        };
+        if record {
+            Ok(())
+        } else {
+            Err(self.error("`->` needs a pointer to a record"))
+        }
+    }
+
     /// The base of an index expression. C allows any array lvalue here: a
     /// local, a slice parameter, a field of a value, or an element of an array
     /// of arrays, which is itself an array in place.
@@ -1330,9 +1347,7 @@ impl<'a> Translator<'a> {
             }
             ExprKind::Member { base, field, arrow } => {
                 if *arrow {
-                    return Err(self.error(
-                        "pointer member access is outside the M1 subset; use a slice or a value",
-                    ));
+                    self.check_arrow(base)?;
                 }
                 if !matches!(
                     self.program.types.canonical(current.ty),
