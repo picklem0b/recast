@@ -238,3 +238,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.24`            | M2 audit: the tag lists include `v1.2.23`.                               |
 | `v1.2.25`            | M2: a record behind a pointer, and a driver that observes its fields.    |
 | `v1.2.26`            | M2 audit: the tag lists include `v1.2.25`.                               |
+| `v1.3.0`             | M3 opens: the workspace version is 1.3.0 and the opening audit records the gap. |

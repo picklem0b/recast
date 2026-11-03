@@ -37,6 +37,7 @@ Supporting documents:
 | [`audits/m0.md`](audits/m0.md)                                           | M0 audit: defects found, repairs and remaining limitations  |
 | [`audits/m1.md`](audits/m1.md)                                           | M1 audit: corpus, verification results and remaining limits |
 | [`audits/m2.md`](audits/m2.md)                                           | M2 audit in progress: build points, assumption and remaining work |
+| [`audits/m3.md`](audits/m3.md)                                           | M3 opening audit: what the verification and gate surface has, and the order of work |
 
 ---
 
