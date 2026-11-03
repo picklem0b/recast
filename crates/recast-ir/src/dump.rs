@@ -3,8 +3,8 @@
 use std::fmt::Write;
 
 use crate::program::{
-    Block, Callee, EnumDef, Expr, ExprKind, Function, Global, Program, RecordDef, Stmt, StmtKind,
-    SCHEMA_NAME,
+    Block, Callee, EnumDef, Expr, ExprKind, Function, Global, Program, RecordDef, RecordKind, Stmt,
+    StmtKind, SCHEMA_NAME,
 };
 use crate::types::TypeTable;
 
@@ -59,9 +59,13 @@ pub fn dump(program: &Program) -> String {
 }
 
 fn dump_record(record: &RecordDef, types: &TypeTable, out: &mut String) {
+    let keyword = match record.kind {
+        RecordKind::Struct => "record",
+        RecordKind::Union => "union",
+    };
     writeln!(
         out,
-        "record {} [{}] size={} align={}",
+        "{keyword} {} [{}] size={} align={}",
         record.name, record.id, record.size, record.align
     )
     .expect("writing to a String cannot fail");

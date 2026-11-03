@@ -49,10 +49,25 @@ pub struct TranslationUnit {
     pub globals: Vec<Global>,
 }
 
-/// A struct definition with its fields in declaration order.
+/// Whether a record's fields occupy separate offsets (`struct`) or one
+/// storage unit (`union`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordKind {
+    /// Fields at successive offsets.
+    #[default]
+    Struct,
+    /// Fields at offset zero, overlapping.
+    Union,
+}
+
+/// A struct or union definition with its fields in declaration order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Record {
     pub name: String,
+    /// `struct` or `union`; an older document omits it and is a `struct`.
+    #[serde(default)]
+    pub kind: RecordKind,
     pub fields: Vec<Field>,
     /// `sizeof` for the record under the exported target, in bytes.
     #[serde(default)]

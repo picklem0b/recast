@@ -21,7 +21,7 @@ use std::fmt;
 
 use recast_ir::{
     is_size_t, slice_group, Block, Callee, Case, Expr, ExprKind, Function, Global, Linkage,
-    Program, RecordDef, Stmt, StmtKind, Type, TypeId,
+    Program, RecordDef, RecordKind, Stmt, StmtKind, Type, TypeId,
 };
 use rust::{
     Expr as RExpr, File as RFile, Fn as RFn, Item as RItem, MatchArm, Pattern, Stmt as RStmt,
@@ -120,6 +120,12 @@ fn append_record(
 ) -> Result<(), TranslateError> {
     let context = format!("record {}", record.name);
     check_ident(&record.name).map_err(|message| TranslateError::new(&context, message))?;
+    if record.kind == RecordKind::Union {
+        return Err(TranslateError::new(
+            &context,
+            "a union has overlapping fields, which needs the M2 layout model",
+        ));
+    }
     let mut fields = Vec::with_capacity(record.fields.len());
     for field in &record.fields {
         check_ident(&field.name).map_err(|message| TranslateError::new(&context, message))?;
