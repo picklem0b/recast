@@ -98,9 +98,10 @@ recast/
     recast-analysis/              alias, ownership, lifetime, nullability, array, UB, template analyses
     recast-translate/             rule engine, type mapping, expression/statement emitters, idiom pass
     recast-rt/                    runtime support crate shipped with generated code (see 06)
-    recast-verify/                differential harness, fuzz glue, sanitizer drivers, safety gate, report
+    recast-verify/                differential harness, fuzz glue, sanitizer drivers
+    recast-report/                recast-report/1 schema, gate profiles, report rendering
     recast-interop/               shim generator, header generation, build-system integration
-    recast-orchestrator/          pipeline driver, scheduler, cache
+    recast-orchestrator/          pipeline driver, report assembly, scheduler, cache
     recast-cli/                   command-line interface
     recast-testkit/               shared test helpers, golden-file utilities
   corpus/                       real projects used for testing (git submodules or pinned archives)
@@ -117,9 +118,10 @@ Folder names from earlier design sketches map to crates as follows: `frontend/cl
 recast-schema <- recast-frontend <- recast-analysis <- recast-translate
 recast-ir     <- (recast-frontend, recast-analysis, recast-translate, recast-verify, recast-interop)
 recast-rt     (standalone; depended on by generated code only, not by the tool)
+recast-report <- (recast-orchestrator, recast-cli)
 recast-interop <- recast-translate, recast-verify
-recast-orchestrator <- all stage crates
-recast-cli <- recast-orchestrator
+recast-orchestrator <- recast-ir, recast-analysis, recast-translate, recast-verify, recast-report
+recast-cli <- recast-orchestrator, recast-report
 ```
 
 `recast-ir` MUST NOT depend on any stage crate. Stage crates MUST NOT depend on each other except as shown.
@@ -160,17 +162,21 @@ recast-cli <- recast-orchestrator
 - A small Rust crate that generated code depends on. Contains the checked cell types, byte string, exception type, C-library shims and boundary helpers. See `docs/architecture/translation.md` section 9.
 - MUST be `#![forbid(unsafe_code)]` except in clearly separated modules (`ffi`, `raw`) that wrap unavoidable `unsafe` with documented invariants.
 
-### 5.6 Verification and safety gate (`recast-verify`)
+### 5.6 Verification (`recast-verify`)
 
-- Implements the verification ladder and the gate. See `docs/architecture/verification.md`.
+- Implements rungs V0 to V5 of the verification ladder. See `docs/architecture/verification.md`.
 
-### 5.7 Interop (`recast-interop`)
+### 5.7 Report and safety gate (`recast-report`)
+
+- Owns the `recast-report/1` schema, validation, Markdown rendering and the gate profiles and rules. It reads evidence; it never translates or executes code.
+
+### 5.8 Interop (`recast-interop`)
 
 - Generates `extern "C"` shims, C headers (via cbindgen-style generation), layout assertions and build glue. See `docs/guides/interop-and-builds.md`.
 
-### 5.8 Orchestrator (`recast-orchestrator`)
+### 5.9 Orchestrator (`recast-orchestrator`)
 
-- Drives the stages, parallelizes per translation unit and per call-graph SCC, caches by content hash, and records timings.
+- Drives the stages, parallelizes per translation unit and per call-graph SCC, assembles the report from the stages' outputs, caches by content hash, and records timings.
 
 ## 6. Data flow and artifacts
 

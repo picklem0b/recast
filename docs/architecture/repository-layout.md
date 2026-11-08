@@ -1,6 +1,6 @@
 # Repository layout
 
-Status: M1. The workspace, the L0 pipeline, the analysis crate and the V0 to V2 verification ladder exist. Planned crates that have no implementation yet contain a library stub.
+Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V2 verification ladder, the `recast-report/1` report and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
 
 ## Tree
 
@@ -31,8 +31,11 @@ recast/
     recast-rt/                  # runtime shipped with generated code
     recast-verify/              # V0 to V2, differential drivers, mutation testing
       src/{lib,driver,mutation}.rs
+    recast-report/              # recast-report/1 types, gate profiles, report.md
+      src/{lib,gate}.rs
     recast-interop/             # shims, layout checks and build integration
-    recast-orchestrator/        # pipeline driver and cache
+    recast-orchestrator/        # pipeline driver, report assembly and cache
+      src/lib.rs
     recast-cli/                 # command line
       src/main.rs
       tests/cli.rs
@@ -94,8 +97,9 @@ The top-level `tests/` is not a Cargo target because the workspace root is not a
 | `recast-translate`    | Type and expression mapping, statement emission, Rust printing       | `src/{lib,rust}.rs`                                            |
 | `recast-rt`           | Runtime support for generated code: bytes, arena, checked, FFI, raw  | `src/lib.rs` (stub)                                            |
 | `recast-verify`       | V0 to V2 drivers, differential runs, property sweeps, mutation tests | `src/{lib,driver,mutation}.rs`                                 |
+| `recast-report`       | `recast-report/1` types, validation, rendering and gate profiles      | `src/{lib,gate}.rs`                                            |
 | `recast-interop`      | Shim generation, layout assertions and build-system integration      | `src/lib.rs` (stub)                                            |
-| `recast-orchestrator` | Pipeline driver, scheduler and content cache                        | `src/lib.rs` (stub)                                            |
+| `recast-orchestrator` | Pipeline driver, report assembly, scheduler and content cache        | `src/lib.rs`                                                   |
 | `recast-cli`          | Command parsing, output and exit codes                               | `src/main.rs`                                                  |
 | `recast-testkit`      | Snippet harness and golden runner                                    | `src/{lib,golden,harness}.rs`                                  |
 | `exporter`            | Clang AST export, macro records and target layout                    | `src/main.cpp`                                                 |
@@ -112,6 +116,8 @@ recast-frontend
 recast-analysis
 recast-translate
 recast-verify
+recast-report
+recast-orchestrator
 recast-interop
 recast-orchestrator
 recast-cli
@@ -239,3 +245,7 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.25`            | M2: a record behind a pointer, and a driver that observes its fields.    |
 | `v1.2.26`            | M2 audit: the tag lists include `v1.2.25`.                               |
 | `v1.3.0`             | M3 opens: the workspace version is 1.3.0 and the opening audit records the gap. |
+| `v1.3.1`             | The README banner and stack badges.                                       |
+| `v1.3.2`             | No AI attribution in commit messages.                                    |
+| `v1.3.3`             | M3: `recast-report/1`, report artifacts and the safety gate.             |
+| `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
