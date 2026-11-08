@@ -643,6 +643,8 @@ fn profile_rules(report: &Report, profile: Profile, policy: Policy) -> Vec<RuleR
                 policy.require_rungs.join(", "),
                 missing.join(", ")
             )
+        } else if policy.require_rungs.is_empty() {
+            format!("profile {profile} requires no rungs")
         } else {
             format!(
                 "every rung profile {profile} requires has a passing result ({})",

@@ -249,3 +249,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.2`             | No AI attribution in commit messages.                                    |
 | `v1.3.3`             | M3: `recast-report/1`, report artifacts and the safety gate.             |
 | `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
+| `v1.3.5`             | M3 repair: the report's `unsafe_inventory` key matches document 07.      |

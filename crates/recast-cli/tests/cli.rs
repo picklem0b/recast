@@ -140,6 +140,10 @@ fn verify_writes_a_report_and_gate_evaluates_it() {
         serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read report"))
             .expect("parse report");
     assert_eq!(report["schema"], "recast-report/1");
+    assert!(
+        report.get("unsafe_inventory").is_some(),
+        "the report uses document 07's unsafe inventory key: {report}"
+    );
     assert_eq!(report["run"]["profile"], "audit");
     assert_eq!(report["verdict"], "ACCEPT_WITH_NOTES");
     assert_eq!(report["determinism"]["identical"], true);

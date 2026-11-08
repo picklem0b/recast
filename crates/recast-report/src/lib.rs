@@ -68,7 +68,7 @@ pub struct Report {
     pub flagged: Vec<Flagged>,
     #[serde(default)]
     pub ub_sites: Vec<UbSite>,
-    #[serde(rename = "unsafe", default)]
+    #[serde(rename = "unsafe_inventory", default)]
     pub unsafe_blocks: Vec<UnsafeBlock>,
     #[serde(default)]
     pub divergences: Vec<Divergence>,
@@ -746,6 +746,10 @@ mod tests {
             json.find("\"findings\"").expect("findings"),
         ];
         assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            json.contains("\"unsafe_inventory\""),
+            "the report uses document 07's key for the unsafe inventory: {json}"
+        );
     }
 
     #[test]
