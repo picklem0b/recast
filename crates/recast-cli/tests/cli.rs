@@ -103,6 +103,69 @@ fn analyze_and_translate_produce_a_compiling_crate() {
 }
 
 #[test]
+fn verify_writes_a_report_and_gate_evaluates_it() {
+    let dir = temp_dir("report");
+    install_fixtures(&dir);
+    let translated = recast(&dir, &["translate"]);
+    assert!(translated.status.success(), "{translated:?}");
+
+    let case = dir.join("case.json");
+    std::fs::write(
+        &case,
+        r#"{"schema":"recast-case/1","calls":[{"function":"add","args":[1,2]}]}"#,
+    )
+    .expect("write case");
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/add.c")
+        .canonicalize()
+        .expect("fixture source");
+
+    let verified = recast(
+        &dir,
+        &[
+            "verify",
+            "--case",
+            case.to_str().expect("case path"),
+            "--source",
+            source.to_str().expect("source path"),
+            "--no-mutation",
+            "--profile",
+            "audit",
+        ],
+    );
+    assert!(verified.status.success(), "{verified:?}");
+
+    let report_path = dir.join("recast-out/report/report.json");
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).expect("read report"))
+            .expect("parse report");
+    assert_eq!(report["schema"], "recast-report/1");
+    assert_eq!(report["run"]["profile"], "audit");
+    assert_eq!(report["verdict"], "ACCEPT_WITH_NOTES");
+    assert_eq!(report["determinism"]["identical"], true);
+    let markdown =
+        std::fs::read_to_string(dir.join("recast-out/report/report.md")).expect("read report.md");
+    assert!(markdown.contains("## Limitations"), "{markdown}");
+    assert!(markdown.contains("do not prove equivalence"), "{markdown}");
+
+    let gated = recast(&dir, &["gate", "--profile", "standard"]);
+    assert_eq!(gated.status.code(), Some(1), "{gated:?}");
+    let gate: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("recast-out/verify/gate.json")).expect("read gate"),
+    )
+    .expect("parse gate");
+    assert_eq!(gate["schema"], "recast-gate/1");
+    assert_eq!(gate["verdict"], "REJECT");
+    let rules = gate["rules"].as_array().expect("rules");
+    assert!(rules
+        .iter()
+        .any(|rule| { rule["id"] == "PROFILE-004" && rule["status"] == "fail" }));
+
+    let audited = recast(&dir, &["gate", "--profile", "audit"]);
+    assert!(audited.status.success(), "{audited:?}");
+}
+
+#[test]
 fn quiet_suppresses_the_human_summary() {
     let dir = temp_dir("quiet");
     install_fixtures(&dir);

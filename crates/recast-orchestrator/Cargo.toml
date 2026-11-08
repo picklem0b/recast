@@ -6,3 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+recast-ir = { path = "../recast-ir" }
+recast-analysis = { path = "../recast-analysis" }
+recast-report = { path = "../recast-report" }
+recast-verify = { path = "../recast-verify" }

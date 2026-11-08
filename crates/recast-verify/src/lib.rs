@@ -28,6 +28,9 @@ pub struct Call {
     pub args: Vec<serde_json::Value>,
 }
 
+/// The seed shared by both sides of every property sweep.
+pub const SWEEP_SEED: u64 = 0x243F_6A88_85A3_08D3;
+
 /// A deterministic random sweep over one function.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Sweep {
