@@ -13,7 +13,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod claims;
+pub mod diff;
 pub mod gate;
+pub mod sarif;
 
 /// Schema name carried by every report.
 pub const SCHEMA: &str = "recast-report/1";
@@ -143,6 +146,17 @@ pub struct Summary {
     pub unsafe_counts: UnsafeCounts,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<Coverage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<MutationSummary>,
+}
+
+/// Operator mutation results for the run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MutationSummary {
+    pub generated: usize,
+    pub killed: usize,
+    pub survived: usize,
+    pub kill_rate: f64,
 }
 
 /// Item totals for the run.
@@ -370,6 +384,25 @@ impl Report {
         } else {
             Err(errors)
         }
+    }
+
+    /// Hash the deterministic part of the report.
+    ///
+    /// GATE-005 excludes the start time, the environment and measured timing
+    /// from the comparison. Everything else, including the mutation summary,
+    /// must be byte-identical across two runs.
+    pub fn determinism_hash(&self) -> String {
+        let mut canonical = self.clone();
+        canonical.run.started_at.clear();
+        canonical.run.environment = None;
+        let json = serde_json::to_string(&canonical)
+            .expect("a report always serializes for the determinism hash");
+        hash_bytes(json.as_bytes())
+    }
+
+    /// Render SARIF 2.1.0 for the findings in this report.
+    pub fn to_sarif(&self) -> String {
+        sarif::render(self)
     }
 
     /// Render the report as `report.md`.
@@ -627,8 +660,12 @@ fn cpu_name() -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn sample_report() -> Report {
+        report()
+    }
 
     fn report() -> Report {
         Report {
@@ -669,6 +706,7 @@ mod tests {
                     functions_exercised_pct: 100.0,
                     lines_pct: None,
                 }),
+                mutation: None,
             },
             evidence: BTreeMap::from([("E2".to_string(), 1)]),
             items: vec![Item {

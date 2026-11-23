@@ -124,10 +124,61 @@ enum CommandLine {
         /// Minimum mutation kill rate in percent (roadmap M1 requires 95).
         #[arg(long, default_value_t = 95.0)]
         min_kill_rate: f64,
+        /// V3 calls to generate (0 disables fuzzing).
+        #[arg(long, default_value_t = 1_000)]
+        fuzz_executions: u64,
+        /// Skip V1 static hygiene.
+        #[arg(long)]
+        no_hygiene: bool,
+        /// Skip V4 sanitizer and Miri checks.
+        #[arg(long)]
+        no_sanitizers: bool,
+    },
+    /// Translate, verify and gate in one step.
+    Run {
+        /// Case description in recast-case/1 JSON.
+        #[arg(long)]
+        case: PathBuf,
+        /// Original C source the case describes.
+        #[arg(long)]
+        source: PathBuf,
+        /// Skip operator mutation testing.
+        #[arg(long)]
+        no_mutation: bool,
+        /// Maximum mutants per case.
+        #[arg(long, default_value_t = 24)]
+        max_mutants: usize,
+        /// Minimum mutation kill rate in percent.
+        #[arg(long, default_value_t = 95.0)]
+        min_kill_rate: f64,
+        /// V3 calls to generate (0 disables fuzzing).
+        #[arg(long, default_value_t = 1_000)]
+        fuzz_executions: u64,
+        /// Skip V1 static hygiene.
+        #[arg(long)]
+        no_hygiene: bool,
+        /// Skip V4 sanitizer and Miri checks.
+        #[arg(long)]
+        no_sanitizers: bool,
+        /// Exit non-zero at or below this verdict.
+        #[arg(long, default_value = "REJECT")]
+        fail_on: String,
+    },
+    /// Explain the evidence recorded for one item.
+    Explain {
+        /// Item id from report.json.
+        item: String,
+    },
+    /// Compare two reports.
+    Diff {
+        /// Earlier report.json.
+        before: PathBuf,
+        /// Later report.json.
+        after: PathBuf,
     },
     /// Evaluate the safety gate on an existing report.
     Gate,
-    /// Re-render report.md from report.json.
+    /// Re-render report.md and report.sarif from report.json.
     Report,
     /// Print version and schema versions.
     Version,
@@ -158,6 +209,9 @@ fn run(cli: Cli) -> Result<u8, CliError> {
             no_mutation,
             max_mutants,
             min_kill_rate,
+            fuzz_executions,
+            no_hygiene,
+            no_sanitizers,
         } => verify_command(
             &cli.global,
             &case,
@@ -165,7 +219,34 @@ fn run(cli: Cli) -> Result<u8, CliError> {
             !no_mutation,
             max_mutants,
             min_kill_rate,
+            fuzz_executions,
+            !no_hygiene,
+            !no_sanitizers,
         ),
+        CommandLine::Run {
+            case,
+            source,
+            no_mutation,
+            max_mutants,
+            min_kill_rate,
+            fuzz_executions,
+            no_hygiene,
+            no_sanitizers,
+            fail_on,
+        } => run_command(
+            &cli.global,
+            &case,
+            &source,
+            !no_mutation,
+            max_mutants,
+            min_kill_rate,
+            fuzz_executions,
+            !no_hygiene,
+            !no_sanitizers,
+            &fail_on,
+        ),
+        CommandLine::Explain { item } => explain_command(&cli.global, &item),
+        CommandLine::Diff { before, after } => diff_command(&cli.global, &before, &after),
         CommandLine::Gate => gate_command(&cli.global),
         CommandLine::Report => report_command(&cli.global),
         CommandLine::Version => version(&cli.global),
@@ -489,6 +570,8 @@ path = \"src/lib.rs\"
 
 [profile.release]
 overflow-checks = true
+
+[workspace]
 "
     );
     std::fs::write(crate_dir.join("Cargo.toml"), manifest).map_err(|error| {
@@ -521,6 +604,7 @@ overflow-checks = true
     Ok(EXIT_OK)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn verify_command(
     global: &Global,
     case_path: &Path,
@@ -528,6 +612,9 @@ fn verify_command(
     mutation: bool,
     max_mutants: usize,
     min_kill_rate: f64,
+    fuzz_executions: u64,
+    hygiene: bool,
+    sanitizers: bool,
 ) -> Result<u8, CliError> {
     let (program, _) = load_program(global)?;
     let case =
@@ -542,11 +629,17 @@ fn verify_command(
     let mut options = recast_verify::Options::new(global.out.join("verify"));
     options.mutation = mutation;
     options.max_mutants = max_mutants;
+    options.hygiene = hygiene;
+    options.fuzz_executions = fuzz_executions;
+    options.sanitizers = sanitizers;
     if let Some(cc) = std::env::var_os("RECAST_CC") {
         options.cc = PathBuf::from(cc);
     }
     if let Some(rustc) = std::env::var_os("RECAST_RUSTC") {
         options.rustc = PathBuf::from(rustc);
+    }
+    if let Some(cargo) = std::env::var_os("RECAST_CARGO") {
+        options.cargo = PathBuf::from(cargo);
     }
     let report = recast_verify::verify(&program, &crate_dir, source, &case, &options)
         .map_err(|error| CliError::input(error.to_string()))?;
@@ -618,9 +711,7 @@ fn verify_command(
     std::fs::write(&json_path, json).map_err(|error| {
         CliError::input(format!("cannot write {}: {error}", json_path.display()))
     })?;
-    let md_path = report_dir.join("report.md");
-    std::fs::write(&md_path, artifact.to_markdown())
-        .map_err(|error| CliError::input(format!("cannot write {}: {error}", md_path.display())))?;
+    write_rendered_report(&artifact, &report_dir)?;
 
     if global.reports() {
         match global.format {
@@ -704,6 +795,177 @@ fn verify_command(
     Ok(EXIT_OK)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_command(
+    global: &Global,
+    case_path: &Path,
+    source: &Path,
+    mutation: bool,
+    max_mutants: usize,
+    min_kill_rate: f64,
+    fuzz_executions: u64,
+    hygiene: bool,
+    sanitizers: bool,
+    fail_on: &str,
+) -> Result<u8, CliError> {
+    let threshold = match fail_on.to_ascii_uppercase().as_str() {
+        "ACCEPT" => 0,
+        "ACCEPT_WITH_NOTES" => 1,
+        "REJECT" => 2,
+        other => {
+            return Err(CliError::usage(format!(
+                "unknown --fail-on verdict {other}; expected ACCEPT, ACCEPT_WITH_NOTES or REJECT"
+            )))
+        }
+    };
+
+    let translated = translate_command(global)?;
+    if translated != EXIT_OK {
+        return Ok(translated);
+    }
+    let verified = verify_command(
+        global,
+        case_path,
+        source,
+        mutation,
+        max_mutants,
+        min_kill_rate,
+        fuzz_executions,
+        hygiene,
+        sanitizers,
+    )?;
+    let gated = gate_command(global)?;
+    if gated == EXIT_DETERMINISM {
+        return Ok(gated);
+    }
+
+    let gate_path = global.out.join("verify/gate.json");
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&gate_path).map_err(|error| {
+            CliError::input(format!("cannot read {}: {error}", gate_path.display()))
+        })?)
+        .map_err(|error| CliError::input(format!("{}: {error}", gate_path.display())))?;
+    let severity = match gate["verdict"].as_str().unwrap_or("REJECT") {
+        "ACCEPT" => 0,
+        "ACCEPT_WITH_NOTES" => 1,
+        _ => 2,
+    };
+    if verified != EXIT_OK || severity >= threshold {
+        return Ok(EXIT_REJECT);
+    }
+    Ok(EXIT_OK)
+}
+
+fn explain_command(global: &Global, id: &str) -> Result<u8, CliError> {
+    let path = global.out.join("report/report.json");
+    let artifact = load_report(&path)?;
+    let Some(item) = artifact.items.iter().find(|item| item.id == id) else {
+        let available = artifact
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(CliError::input(format!(
+            "{} has no item {id}; known items: {available}",
+            path.display()
+        )));
+    };
+    let findings: Vec<&recast_report::Finding> = artifact
+        .findings
+        .iter()
+        .filter(|finding| finding.function == id)
+        .collect();
+
+    match global.format {
+        Format::Human => {
+            println!("item {}", item.id);
+            println!("  source {}:{}", item.source.file, item.source.line);
+            if let Some(rust) = &item.rust {
+                println!("  generated {}", rust.path);
+            }
+            println!(
+                "  tier {}  evidence {}  verdict {}",
+                item.tier,
+                item.evidence_class,
+                item.verdict.as_str()
+            );
+            if !item.rules.is_empty() {
+                println!("  rules {}", item.rules.join(", "));
+            }
+            for evidence in &item.evidence {
+                let mut detail = format!("{} {}", evidence.rung, evidence.result);
+                if let Some(executions) = evidence.executions {
+                    detail.push_str(&format!(", {executions} execution(s)"));
+                }
+                if let Some(seed) = evidence.seed {
+                    detail.push_str(&format!(", seed {seed}"));
+                }
+                println!("  evidence {detail}");
+            }
+            for assumption in &item.assumptions {
+                println!(
+                    "  assumption {}{}",
+                    assumption.fact,
+                    assumption
+                        .verified_by
+                        .as_ref()
+                        .map(|rung| format!(" (verified by {rung})"))
+                        .unwrap_or_default()
+                );
+            }
+            for note in &item.notes {
+                println!("  note {note}");
+            }
+            for finding in findings {
+                println!(
+                    "  finding {} {}:{} {}",
+                    finding.rule, finding.file, finding.line, finding.message
+                );
+            }
+        }
+        Format::Json => {
+            let document = serde_json::json!({ "item": item, "findings": findings });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&document)
+                    .map_err(|error| CliError::internal(error.to_string()))?
+            );
+        }
+    }
+    Ok(EXIT_OK)
+}
+
+fn diff_command(global: &Global, before: &Path, after: &Path) -> Result<u8, CliError> {
+    let before = load_report(before)?;
+    let after = load_report(after)?;
+    let diff = recast_report::diff::compare(&before, &after);
+    match global.format {
+        Format::Human => print!("{}", diff.to_text()),
+        Format::Json => print!(
+            "{}",
+            diff.to_json()
+                .map_err(|error| CliError::internal(error.to_string()))?
+        ),
+    }
+    Ok(EXIT_OK)
+}
+
+fn load_report(path: &Path) -> Result<recast_report::Report, CliError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| CliError::input(format!("cannot read {}: {error}", path.display())))?;
+    let artifact: recast_report::Report = serde_json::from_str(&text)
+        .map_err(|error| CliError::input(format!("{}: {error}", path.display())))?;
+    artifact.validate().map_err(|errors| {
+        CliError::input(format!(
+            "{} is not a valid recast-report/1 document: {}",
+            path.display(),
+            errors.join("; ")
+        ))
+    })?;
+    Ok(artifact)
+}
+
 fn gate_command(global: &Global) -> Result<u8, CliError> {
     let path = global.out.join("report/report.json");
     let text = std::fs::read_to_string(&path).map_err(|error| {
@@ -783,10 +1045,7 @@ fn report_command(global: &Global) -> Result<u8, CliError> {
             errors.join("; ")
         ))
     })?;
-    let markdown = global.out.join("report/report.md");
-    std::fs::write(&markdown, artifact.to_markdown()).map_err(|error| {
-        CliError::input(format!("cannot write {}: {error}", markdown.display()))
-    })?;
+    let markdown = write_rendered_report(&artifact, &global.out.join("report"))?;
     if global.reports() {
         match global.format {
             Format::Human => println!("wrote {}", markdown.display()),
@@ -794,6 +1053,39 @@ fn report_command(global: &Global) -> Result<u8, CliError> {
         }
     }
     Ok(EXIT_OK)
+}
+
+/// Write `report.md` and `report.sarif`, and fail if the rendered prose
+/// claims more than the evidence supports.
+fn write_rendered_report(
+    artifact: &recast_report::Report,
+    directory: &Path,
+) -> Result<PathBuf, CliError> {
+    std::fs::create_dir_all(directory).map_err(|error| {
+        CliError::input(format!("cannot create {}: {error}", directory.display()))
+    })?;
+    let markdown = artifact.to_markdown();
+    let violations = recast_report::claims::lint(&markdown);
+    if !violations.is_empty() {
+        let phrases = violations
+            .iter()
+            .map(|violation| violation.phrase.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(CliError::internal(format!(
+            "report prose overclaims the evidence: {phrases}"
+        )));
+    }
+    let md_path = directory.join("report.md");
+    std::fs::write(&md_path, markdown)
+        .map_err(|error| CliError::input(format!("cannot write {}: {error}", md_path.display())))?;
+    let sarif_path = directory.join("report.sarif");
+    std::fs::write(&sarif_path, artifact.to_sarif()).map_err(|error| {
+        CliError::input(format!("cannot write {}: {error}", sarif_path.display()))
+    })?;
+    Ok(md_path)
 }
 
 fn command_version(tool: &Path, arg: &str) -> Option<String> {

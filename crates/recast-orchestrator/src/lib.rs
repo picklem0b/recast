@@ -53,6 +53,28 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
         .map(|sweep| (sweep.function.as_str(), sweep))
         .collect();
 
+    let fuzz: BTreeMap<&str, &recast_verify::fuzz::FuzzReport> = input
+        .verification
+        .fuzz
+        .iter()
+        .map(|report| (report.function.as_str(), report))
+        .collect();
+    let hygiene_ok = input
+        .verification
+        .hygiene
+        .as_ref()
+        .is_some_and(|hygiene| hygiene.passed());
+    let safety_ok = input
+        .verification
+        .safety
+        .as_ref()
+        .is_some_and(|safety| safety.passed());
+    let safety_failed = input
+        .verification
+        .safety
+        .as_ref()
+        .is_some_and(|safety| !safety.passed());
+
     let mut items = Vec::new();
     for function in &input.program.functions {
         if function.body.is_none() {
@@ -103,11 +125,60 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
                 budget: Some(format!("{} executions", sweep.iterations)),
             });
         }
-        let item_failed = !input.verification.compiled || differential_failed || sweep_failed;
-        let evidence_class = if item_failed || !exercised {
-            "E0"
-        } else {
+        if let Some(hygiene) = &input.verification.hygiene {
+            evidence.push(Evidence {
+                rung: "V1".to_string(),
+                result: if hygiene.passed() { "pass" } else { "fail" }.to_string(),
+                executions: None,
+                coverage_pct: None,
+                seed: None,
+                budget: None,
+            });
+        }
+        let fuzz_report = fuzz.get(name).copied();
+        if let Some(fuzz) = fuzz_report {
+            evidence.push(Evidence {
+                rung: "V3".to_string(),
+                result: if fuzz.passed { "pass" } else { "fail" }.to_string(),
+                executions: Some(fuzz.executions),
+                coverage_pct: None,
+                seed: Some(fuzz.seed),
+                budget: Some(format!("{} executions", fuzz.executions)),
+            });
+        }
+        if let Some(safety) = &input.verification.safety {
+            evidence.push(Evidence {
+                rung: "V4".to_string(),
+                result: if safety.passed() { "pass" } else { "fail" }.to_string(),
+                executions: None,
+                coverage_pct: None,
+                seed: None,
+                budget: None,
+            });
+        }
+        let v2_ok = exercised && !sweep_failed && (executions == 0 || !calls_failed);
+        let v3_ok = v2_ok && fuzz_report.is_some_and(|fuzz| fuzz.passed);
+        let v4_ok = v3_ok && safety_ok;
+        let item_failed = !input.verification.compiled
+            || differential_failed
+            || sweep_failed
+            || input
+                .verification
+                .hygiene
+                .as_ref()
+                .is_some_and(|hygiene| !hygiene.passed())
+            || fuzz_report.is_some_and(|fuzz| !fuzz.passed)
+            || safety_failed;
+        let evidence_class = if v4_ok {
+            "E4"
+        } else if v3_ok {
+            "E3"
+        } else if v2_ok {
             "E2"
+        } else if hygiene_ok && input.verification.compiled {
+            "E1"
+        } else {
+            "E0"
         };
 
         let function_findings: Vec<&recast_analysis::Finding> = analysis
@@ -190,6 +261,30 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
             message: finding.message.clone(),
         })
         .collect();
+    if let Some(hygiene) = &input.verification.hygiene {
+        for note in &hygiene.notes {
+            findings.push(Finding {
+                rule: "TOOL:V1".to_string(),
+                function: "*".to_string(),
+                file: input.source.display().to_string(),
+                line: 1,
+                column: 1,
+                message: note.clone(),
+            });
+        }
+    }
+    if let Some(safety) = &input.verification.safety {
+        for note in &safety.notes {
+            findings.push(Finding {
+                rule: "TOOL:V4".to_string(),
+                function: "*".to_string(),
+                file: input.source.display().to_string(),
+                line: 1,
+                column: 1,
+                message: note.clone(),
+            });
+        }
+    }
     findings.sort_by(|left, right| {
         (
             &left.file,
@@ -233,7 +328,7 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
 
     let exercised = items
         .iter()
-        .filter(|item| item.evidence_class != "E0")
+        .filter(|item| matches!(item.evidence_class.as_str(), "E2" | "E3" | "E4"))
         .count();
     let rejected = items
         .iter()
@@ -246,35 +341,40 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
             .or_insert(0usize) += 1;
     }
 
-    let mut skipped_rungs = vec![
-        SkippedRung {
+    let mut skipped_rungs = vec![SkippedRung {
+        rung: "V5".to_string(),
+        reason: "formal evidence is not enabled by this profile".to_string(),
+    }];
+    if input.verification.hygiene.is_none() {
+        skipped_rungs.push(SkippedRung {
             rung: "V1".to_string(),
-            reason: "static hygiene is not implemented in this build point".to_string(),
-        },
-        SkippedRung {
+            reason: "static hygiene was disabled for this run".to_string(),
+        });
+    }
+    if input.verification.fuzz.is_empty() {
+        skipped_rungs.push(SkippedRung {
             rung: "V3".to_string(),
-            reason: "differential fuzzing is not implemented in this build point".to_string(),
-        },
-        SkippedRung {
+            reason: "no fuzz calls were generated, or fuzzing was disabled".to_string(),
+        });
+    }
+    if input.verification.safety.is_none() {
+        skipped_rungs.push(SkippedRung {
             rung: "V4".to_string(),
-            reason: "sanitizer and Miri integration is not implemented in this build point"
-                .to_string(),
-        },
-        SkippedRung {
-            rung: "V5".to_string(),
-            reason: "formal evidence is not enabled by this profile".to_string(),
-        },
-    ];
+            reason: "sanitizer and Miri checks were disabled for this run".to_string(),
+        });
+    }
     skipped_rungs.sort_by(|left, right| left.rung.cmp(&right.rung));
 
-    let divergence = (!input.verification.compiled || !input.verification.passed()).then(|| {
-        Divergence {
-            id: "D-001".to_string(),
-            class: "unknown".to_string(),
-            reproducer: format!("{}#{}", input.source.display(), input.verification.case),
-            resolution: "the V2 differential output differs; inspect the saved drivers under recast-out/verify/"
-                .to_string(),
-        }
+    let differential_failed = !input.verification.compiled
+        || input.verification.calls_passed != input.verification.calls_total
+        || input.verification.sweeps.iter().any(|sweep| !sweep.passed)
+        || input.verification.fuzz.iter().any(|fuzz| !fuzz.passed);
+    let divergence = differential_failed.then(|| Divergence {
+        id: "D-001".to_string(),
+        class: "unknown".to_string(),
+        reproducer: format!("{}#{}", input.source.display(), input.verification.case),
+        resolution: "the differential output differs; inspect the saved drivers and fuzz corpus under recast-out/verify/"
+            .to_string(),
     });
 
     let run = Run {
@@ -321,7 +421,14 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
                     loc: None,
                 },
             )]),
-            unsafe_counts: UnsafeCounts::default(),
+            unsafe_counts: UnsafeCounts {
+                generated_code_blocks: input
+                    .verification
+                    .hygiene
+                    .as_ref()
+                    .map_or(0, |hygiene| hygiene.unsafe_tokens),
+                ..UnsafeCounts::default()
+            },
             coverage: Some(Coverage {
                 functions_exercised_pct: if items.is_empty() {
                     0.0
@@ -329,6 +436,14 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
                     exercised as f64 * 100.0 / items.len() as f64
                 },
                 lines_pct: None,
+            }),
+            mutation: input.verification.mutations.as_ref().map(|mutation| {
+                recast_report::MutationSummary {
+                    generated: mutation.generated,
+                    killed: mutation.killed(),
+                    survived: mutation.survived.len(),
+                    kill_rate: mutation.kill_rate(),
+                }
             }),
         },
         evidence: evidence_counts,
@@ -388,6 +503,9 @@ mod tests {
             calls_passed: usize::from(passed),
             calls_total: 1,
             sweeps: Vec::new(),
+            hygiene: None,
+            fuzz: Vec::new(),
+            safety: None,
             mutations: None,
             failures: Vec::new(),
         }

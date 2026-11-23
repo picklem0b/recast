@@ -10,7 +10,11 @@
 //! testing against the V2 differential.
 
 mod driver;
+pub mod fuzz;
+pub mod hygiene;
 mod mutation;
+pub mod safety;
+pub mod sandbox;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,7 +25,7 @@ use recast_ir::Program;
 use serde::Deserialize;
 
 /// One call the differential executes on both implementations.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct Call {
     pub function: String,
     #[serde(default)]
@@ -87,6 +91,13 @@ pub struct Options {
     pub work: PathBuf,
     pub cc: PathBuf,
     pub rustc: PathBuf,
+    pub cargo: PathBuf,
+    /// Run V1 static hygiene on the generated crate.
+    pub hygiene: bool,
+    /// Run V3 differential fuzzing with this many calls.
+    pub fuzz_executions: u64,
+    /// Run V4 sanitizer and Miri checks.
+    pub sanitizers: bool,
     /// Run operator mutation testing after the differential.
     pub mutation: bool,
     /// Maximum mutants generated per case.
@@ -100,6 +111,10 @@ impl Options {
             work: work.into(),
             cc: PathBuf::from("clang"),
             rustc: PathBuf::from("rustc"),
+            cargo: PathBuf::from("cargo"),
+            hygiene: true,
+            fuzz_executions: 1_000,
+            sanitizers: true,
             mutation: false,
             max_mutants: 24,
         }
@@ -138,6 +153,9 @@ pub struct Report {
     pub calls_passed: usize,
     pub calls_total: usize,
     pub sweeps: Vec<SweepReport>,
+    pub hygiene: Option<hygiene::HygieneReport>,
+    pub fuzz: Vec<fuzz::FuzzReport>,
+    pub safety: Option<safety::SafetyReport>,
     pub mutations: Option<MutationReport>,
     pub failures: Vec<String>,
 }
@@ -157,6 +175,9 @@ impl Report {
         self.compiled
             && self.calls_passed == self.calls_total
             && self.sweeps.iter().all(|sweep| sweep.passed)
+            && self.hygiene.as_ref().is_none_or(|hygiene| hygiene.passed())
+            && self.fuzz.iter().all(|fuzz| fuzz.passed)
+            && self.safety.as_ref().is_none_or(|safety| safety.passed())
     }
 }
 
@@ -220,11 +241,22 @@ pub fn verify(
             calls_passed: 0,
             calls_total: case.calls.len(),
             sweeps: Vec::new(),
+            hygiene: None,
+            fuzz: Vec::new(),
+            safety: None,
             mutations: None,
             failures: vec![message],
         });
     }
     v0?;
+
+    let library_source = std::fs::read_to_string(crate_dir.join("src/lib.rs"))
+        .map_err(|error| Error::io(crate_dir.join("src/lib.rs"), error))?;
+    let hygiene = if options.hygiene {
+        Some(hygiene::run(options, crate_dir, &library_source)?)
+    } else {
+        None
+    };
 
     let c_driver = options.work.join("calls.c");
     let rust_driver = options.work.join("calls.rs");
@@ -279,6 +311,26 @@ pub fn verify(
         });
     }
 
+    let fuzz = if options.fuzz_executions > 0 {
+        fuzz::run(options, program, case, source, options.fuzz_executions)?
+    } else {
+        Vec::new()
+    };
+    if !fuzz.iter().all(|fuzz| fuzz.passed) {
+        failures.push("V3 differential fuzzing diverged".to_string());
+    }
+
+    let safety = if options.sanitizers {
+        Some(safety::run(options, &c_driver)?)
+    } else {
+        None
+    };
+    if let Some(safety) = &safety {
+        if !safety.passed() {
+            failures.push("V4 dynamic safety checks failed".to_string());
+        }
+    }
+
     let mutations = if options.mutation {
         // Mutation testing measures the strength of the differential inputs; a
         // survivor is a quality signal, not a wrong translation. The CLI decides
@@ -302,6 +354,9 @@ pub fn verify(
         calls_passed,
         calls_total,
         sweeps,
+        hygiene,
+        fuzz,
+        safety,
         mutations,
         failures,
     })
@@ -391,13 +446,29 @@ pub(crate) fn run_with_timeout(binary: &Path, timeout: Duration) -> Result<Strin
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| Error::io(binary.to_path_buf(), error))?;
+    // Read both pipes while the child runs. Waiting first would deadlock as
+    // soon as a driver wrote past the pipe buffer, which a fuzz run does.
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let stdout = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buffer);
+        buffer
+    });
+    let stderr = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stderr, &mut buffer);
+        buffer
+    });
     let start = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout.join();
+                let _ = stderr.join();
                 return Err(Error::Process {
                     tool: binary.display().to_string(),
                     message: format!("timed out after {}s", timeout.as_secs()),
@@ -406,21 +477,20 @@ pub(crate) fn run_with_timeout(binary: &Path, timeout: Duration) -> Result<Strin
             Ok(None) => std::thread::sleep(Duration::from_millis(5)),
             Err(error) => return Err(Error::io(binary.to_path_buf(), error)),
         }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| Error::io(binary.to_path_buf(), error))?;
-    if !output.status.success() {
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    if !status.success() {
         return Err(Error::Process {
             tool: binary.display().to_string(),
             message: format!(
                 "exited with {:?}: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr)
+                status.code(),
+                String::from_utf8_lossy(&stderr)
             ),
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
 pub(crate) fn sanitize(name: &str) -> String {
@@ -440,6 +510,9 @@ mod tests {
             calls_passed: 1,
             calls_total: 1,
             sweeps: Vec::new(),
+            hygiene: None,
+            fuzz: Vec::new(),
+            safety: None,
             mutations,
             failures: Vec::new(),
         }

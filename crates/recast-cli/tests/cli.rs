@@ -151,19 +151,61 @@ fn verify_writes_a_report_and_gate_evaluates_it() {
         std::fs::read_to_string(dir.join("recast-out/report/report.md")).expect("read report.md");
     assert!(markdown.contains("## Limitations"), "{markdown}");
     assert!(markdown.contains("do not prove equivalence"), "{markdown}");
+    let sarif: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("recast-out/report/report.sarif"))
+            .expect("read report.sarif"),
+    )
+    .expect("parse SARIF");
+    assert_eq!(sarif["version"], "2.1.0");
 
+    let explained = recast(&dir, &["explain", "fn:c:@F@add"]);
+    assert!(explained.status.success(), "{explained:?}");
+    let text = String::from_utf8_lossy(&explained.stdout);
+    assert!(text.contains("tier T0"), "{text}");
+    assert!(text.contains("evidence V4 pass"), "{text}");
+
+    let diff = recast(
+        &dir,
+        &[
+            "diff",
+            report_path.to_str().expect("report path"),
+            report_path.to_str().expect("report path"),
+        ],
+    );
+    assert!(diff.status.success(), "{diff:?}");
+    assert!(
+        String::from_utf8_lossy(&diff.stdout).contains("no differences"),
+        "{diff:?}"
+    );
+
+    // Every rung standard requires now has a passing result, so the verdict
+    // is ACCEPT_WITH_NOTES: the unexercised functions are notes, not failures.
     let gated = recast(&dir, &["gate", "--profile", "standard"]);
-    assert_eq!(gated.status.code(), Some(1), "{gated:?}");
+    assert!(gated.status.success(), "{gated:?}");
     let gate: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(dir.join("recast-out/verify/gate.json")).expect("read gate"),
     )
     .expect("parse gate");
     assert_eq!(gate["schema"], "recast-gate/1");
+    assert_eq!(gate["verdict"], "ACCEPT_WITH_NOTES");
+    let rules = gate["rules"].as_array().expect("rules");
+    assert!(rules
+        .iter()
+        .any(|rule| { rule["id"] == "PROFILE-004" && rule["status"] == "pass" }));
+
+    // Strict has no note disposition: an unverified pointer assumption and
+    // unexercised items are failures.
+    let strict = recast(&dir, &["gate", "--profile", "strict"]);
+    assert_eq!(strict.status.code(), Some(1), "{strict:?}");
+    let gate: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("recast-out/verify/gate.json")).expect("read gate"),
+    )
+    .expect("parse gate");
     assert_eq!(gate["verdict"], "REJECT");
     let rules = gate["rules"].as_array().expect("rules");
     assert!(rules
         .iter()
-        .any(|rule| { rule["id"] == "PROFILE-004" && rule["status"] == "fail" }));
+        .any(|rule| rule["id"] == "GATE-006" && rule["status"] == "fail"));
 
     let audited = recast(&dir, &["gate", "--profile", "audit"]);
     assert!(audited.status.success(), "{audited:?}");

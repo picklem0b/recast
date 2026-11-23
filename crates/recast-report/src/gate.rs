@@ -769,6 +769,7 @@ mod tests {
                     functions_exercised_pct: 100.0,
                     lines_pct: None,
                 }),
+                mutation: None,
             },
             evidence: BTreeMap::from([("E2".to_string(), 1)]),
             items: vec![Item {

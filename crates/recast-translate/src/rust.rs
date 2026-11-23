@@ -213,6 +213,19 @@ impl Expr {
                 out.push(')');
             }
             Expr::Cast { expr, ty } => {
+                // A cast of an unsuffixed integer literal is only a type
+                // annotation; spelling the suffix avoids a clippy
+                // `unnecessary_cast` on generated code.
+                if let Expr::Int {
+                    value,
+                    suffix: None,
+                } = expr.as_ref()
+                {
+                    if is_integer_type(ty) {
+                        let _ = write!(out, "{value}_{ty}");
+                        return;
+                    }
+                }
                 out.push_str(&expr.wrapped(10));
                 let _ = write!(out, " as {ty}");
             }
@@ -288,6 +301,23 @@ impl Expr {
         self.render(&mut out);
         out
     }
+}
+
+fn is_integer_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "i8" | "u8"
+            | "i16"
+            | "u16"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "i128"
+            | "u128"
+            | "isize"
+            | "usize"
+    )
 }
 
 /// The number an unsigned literal's bits stand for, so a value stored as a

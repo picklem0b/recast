@@ -338,3 +338,24 @@ fn render_expr(expr: &Expr, types: &TypeTable) -> String {
         ExprKind::Unsupported(spelling) => format!("@{node} unsupported {spelling}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::Target;
+    use crate::{Program, SCHEMA_VERSION};
+
+    #[test]
+    fn the_frozen_tir_schema_and_header_are_pinned() {
+        assert_eq!(SCHEMA_NAME, "tir/1");
+        assert_eq!(SCHEMA_VERSION, 1);
+        let mut program = Program::new(Target::lp64("x86_64-unknown-linux-gnu"));
+        program.add_file("a.c");
+        let first = dump(&program);
+        assert!(
+            first.starts_with("tir/1 schema=1 target=x86_64-unknown-linux-gnu"),
+            "{first}"
+        );
+        assert_eq!(first, dump(&program));
+    }
+}

@@ -1,6 +1,6 @@
 # Repository layout
 
-Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V2 verification ladder, the `recast-report/1` report and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
+Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
 
 ## Tree
 
@@ -250,3 +250,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.3`             | M3: `recast-report/1`, report artifacts and the safety gate.             |
 | `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
 | `v1.3.5`             | M3 repair: the report's `unsafe_inventory` key matches document 07.      |
+| `v1.3.6`             | M3: V1 hygiene, V3 fuzzing, V4 safety checks, SARIF and the `run`, `explain` and `diff` commands. |
