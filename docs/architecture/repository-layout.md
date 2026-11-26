@@ -252,4 +252,7 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
 | `v1.3.5`             | M3 repair: the report's `unsafe_inventory` key matches document 07.      |
 | `v1.3.6`             | M3: V1 hygiene, V3 fuzzing, V4 safety checks, SARIF and the `run`, `explain` and `diff` commands. |
-| `v1.3.7`             | M3 repair: C++ input is refused by name, and CI runs the M2 and C++ refusal checks. |
+| `v1.3.7`             | M3 repair: C++ input is refused by name.                                  |
+| `v1.3.8`             | M3: CI runs the M2 corpus, M2 refusals and C++ refusals; `corpus/m2/scan`. |
+| `v1.3.9`             | M3 repair: the C++ refusal check names the language with `-x c++`.      |
+| `v1.3.10`            | M3 audit: the page and tag lists record `v1.3.7` to `v1.3.9`.           |
