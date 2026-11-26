@@ -231,6 +231,29 @@ int f(int *p) { return both(p, p); }
 C
 expect_refusal alias_mutable 'p is passed to two mutable parameters, which C allows to alias; the M2 ownership model is needed'
 
+# C computes `x *= 1.5` in double and converts the product back, which is 15
+# for x = 10. Converting the operand first multiplies by one, which compiled
+# to different behavior until this refusal was added.
+snippet float_compound <<'C'
+int scale(int x) { x *= 1.5; return x; }
+C
+expect_refusal float_compound "a compound assignment on an integer with a floating right operand needs the M2 numeric model"
+
+# The TIR block is flat, so a declaration in a nested scope would become a
+# Rust `let` that shadows the outer name for every later use: the C below
+# returns 1 and the flattened translation returned 3.
+snippet nested_shadow <<'C'
+int shadow(void) {
+    int x = 1;
+    {
+        int x = 2;
+        x++;
+    }
+    return x;
+}
+C
+expect_refusal nested_shadow "is redeclared in a nested block; shadowing needs the M2 scoping model"
+
 if ((refused != checked)); then
   echo "$((checked - refused)) construct(s) were not refused" >&2
   exit 1

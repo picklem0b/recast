@@ -339,7 +339,11 @@ impl<'a> Translator<'a> {
                 params.push((name, format!("{reference}[{element}]")));
                 continue;
             }
-            if self.assigned.contains(&name) {
+            if !block_mentions(source, &name) {
+                // C allows an unused parameter; Rust warns about it, and V1
+                // runs clippy with `-D warnings` on the generated crate.
+                name = format!("_{name}");
+            } else if self.assigned.contains(&name) {
                 // C parameters are mutable; Rust parameters are not unless
                 // asked, and assigning through a parameter is ordinary L0.
                 name = format!("mut {name}");
@@ -754,6 +758,20 @@ impl<'a> Translator<'a> {
             // The same shift the binary form lowers, so an out-of-range count
             // keeps its UB-007 panic instead of wrapping silently.
             let shift = self.shift(if op == "<<=" { "<<" } else { ">>" }, lhs, rhs)?;
+            if let RExpr::Binary {
+                op: shift_op,
+                lhs: base,
+                rhs: count,
+            } = &shift
+            {
+                if *shift_op == "<<" || *shift_op == ">>" {
+                    return Ok(RStmt::Assign {
+                        target: (**base).clone(),
+                        op: if *shift_op == "<<" { "<<=" } else { ">>=" },
+                        value: (**count).clone(),
+                    });
+                }
+            }
             return Ok(RStmt::Assign {
                 target: self.expr(lhs)?,
                 op: "=",
@@ -1065,18 +1083,23 @@ impl<'a> Translator<'a> {
                 lhs: Box::new(self.condition(lhs)?),
                 rhs: Box::new(self.condition(rhs)?),
             }),
-            "==" | "!=" | "<" | "<=" | ">" | ">=" => Ok(RExpr::Binary {
-                op: match op {
-                    "==" => "==",
-                    "!=" => "!=",
-                    "<" => "<",
-                    "<=" => "<=",
-                    ">" => ">",
-                    _ => ">=",
-                },
-                lhs: Box::new(self.value(lhs, lhs.ty)?),
-                rhs: Box::new(self.value(rhs, rhs.ty)?),
-            }),
+            "==" | "!=" | "<" | "<=" | ">" | ">=" => {
+                if let Some(empty) = self.len_vs_zero(op, lhs, rhs) {
+                    return Ok(empty);
+                }
+                Ok(RExpr::Binary {
+                    op: match op {
+                        "==" => "==",
+                        "!=" => "!=",
+                        "<" => "<",
+                        "<=" => "<=",
+                        ">" => ">",
+                        _ => ">=",
+                    },
+                    lhs: Box::new(self.value(lhs, lhs.ty)?),
+                    rhs: Box::new(self.value(rhs, rhs.ty)?),
+                })
+            }
             "<<" | ">>" => self.shift(op, lhs, rhs),
             "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" => {
                 let lhs_expr = self.value(lhs, lhs.ty)?;
@@ -1116,8 +1139,9 @@ impl<'a> Translator<'a> {
         let lhs_expr = self.value(lhs, lhs.ty)?;
         let rhs_expr = self.value(rhs, rhs.ty)?;
         let width = self.int_width(lhs.ty)?;
-        if let ExprKind::IntLit(count) = &rhs.kind {
-            if *count >= 0 && (*count as u64) < width {
+        let literal = int_literal(rhs);
+        if let Some(count) = literal {
+            if count >= 0 && (count as u64) < width {
                 return Ok(RExpr::Binary {
                     op: if op == "<<" { "<<" } else { ">>" },
                     lhs: Box::new(lhs_expr),
@@ -1130,13 +1154,19 @@ impl<'a> Translator<'a> {
         } else {
             "checked_shr"
         };
+        // A literal count already fits `u32`; spelling it with the suffix
+        // avoids a cast clippy would reject as unnecessary.
+        let count = match literal {
+            Some(count) if count >= 0 => RExpr::typed_int(count, "u32"),
+            _ => RExpr::Cast {
+                expr: Box::new(rhs_expr),
+                ty: "u32".to_string(),
+            },
+        };
         let checked = RExpr::Method {
             receiver: Box::new(self.typed(lhs_expr, lhs.ty)),
             method: method.to_string(),
-            args: vec![RExpr::Cast {
-                expr: Box::new(rhs_expr),
-                ty: "u32".to_string(),
-            }],
+            args: vec![count],
         };
         Ok(RExpr::Method {
             receiver: Box::new(checked),
@@ -1374,6 +1404,13 @@ impl<'a> Translator<'a> {
 
     /// A value used as an index, coerced to `usize`.
     fn index_value(&self, expr: &Expr) -> Result<RExpr, TranslateError> {
+        // A nonnegative integer literal already infers `usize` in index
+        // position. Casting it would only add a clippy `unnecessary_cast`.
+        if let ExprKind::IntLit(value) = expr.kind {
+            if value >= 0 {
+                return Ok(RExpr::int(value));
+            }
+        }
         let lowered = self.value(expr, expr.ty)?;
         if self.rust_type(expr.ty)? == "usize" {
             return Ok(lowered);
@@ -1382,6 +1419,37 @@ impl<'a> Translator<'a> {
             expr: Box::new(lowered),
             ty: "usize".to_string(),
         })
+    }
+
+    /// Compare a slice length with zero as `is_empty()`, which clippy prefers
+    /// and which states the intent directly.
+    fn len_vs_zero(&self, op: &str, lhs: &Expr, rhs: &Expr) -> Option<RExpr> {
+        // C's integer conversions wrap both operands in casts; the length and
+        // the zero are under them.
+        let lhs = unwrap_casts(lhs);
+        let rhs = unwrap_casts(rhs);
+        let (name, other) = match (&lhs.kind, &rhs.kind) {
+            (ExprKind::Local(name), _) => (name, rhs),
+            (_, ExprKind::Local(name)) => (name, lhs),
+            _ => return None,
+        };
+        let plan = self.slice_by_length(name)?;
+        let ExprKind::IntLit(0) = other.kind else {
+            return None;
+        };
+        let empty = RExpr::Method {
+            receiver: Box::new(RExpr::Path(plan.pointer.clone())),
+            method: "is_empty".to_string(),
+            args: Vec::new(),
+        };
+        match op {
+            "==" => Some(empty),
+            "!=" => Some(RExpr::Unary {
+                op: "!",
+                expr: Box::new(empty),
+            }),
+            _ => None,
+        }
     }
 
     fn rust_type(&self, id: TypeId) -> Result<String, TranslateError> {
@@ -1983,9 +2051,18 @@ fn collect_expr_borrows(program: &Program, expr: &Expr, names: &mut BTreeSet<Str
                 collect_expr_borrows(program, arg, names);
             }
         }
-        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => {
-            collect_expr_borrows(program, expr, names);
+        ExprKind::Cast { to, expr, .. } => {
+            // An address taken through `*mut` and immediately used as `*const`
+            // is not a mutable borrow, even though C spells the decay cast
+            // that way. Marking it would make the declaration `mut` and clippy
+            // would report `unused_mut`.
+            if is_const_pointer_type(program, *to) {
+                collect_expr_borrows_const(program, expr, names);
+            } else {
+                collect_expr_borrows(program, expr, names);
+            }
         }
+        ExprKind::Paren(expr) => collect_expr_borrows(program, expr, names),
         ExprKind::IntLit(_)
         | ExprKind::FloatLit(_)
         | ExprKind::StringLit(_)
@@ -1997,6 +2074,28 @@ fn collect_expr_borrows(program: &Program, expr: &Expr, names: &mut BTreeSet<Str
         | ExprKind::EnumConst { .. }
         | ExprKind::Unsupported(_) => {}
     }
+}
+
+/// Collect borrows under a cast to a const pointer. The immediate address-of
+/// is read-only there; the operands it indexes may still take other addresses.
+fn collect_expr_borrows_const(program: &Program, expr: &Expr, names: &mut BTreeSet<String>) {
+    match &expr.kind {
+        ExprKind::Unary { op, operand, .. } if op == "&" => {
+            collect_expr_borrows(program, operand, names);
+        }
+        ExprKind::Paren(inner) => collect_expr_borrows_const(program, inner, names),
+        ExprKind::Cast { to, expr, .. } if is_const_pointer_type(program, *to) => {
+            collect_expr_borrows_const(program, expr, names);
+        }
+        _ => collect_expr_borrows(program, expr, names),
+    }
+}
+
+fn is_const_pointer_type(program: &Program, id: TypeId) -> bool {
+    matches!(
+        program.types.canonical(id),
+        Some(Type::Pointer { is_const: true, .. })
+    )
 }
 
 /// The expression under parentheses and casts, which is where C hides the
@@ -2036,6 +2135,90 @@ fn root_local(expr: &Expr) -> Option<&str> {
         ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => root_local(inner),
         ExprKind::Member { base, .. } => root_local(base),
         ExprKind::Index { base, .. } => root_local(base),
+        _ => None,
+    }
+}
+
+/// Whether `name` is mentioned anywhere in the block.
+fn block_mentions(block: &Block, name: &str) -> bool {
+    block.stmts.iter().any(|stmt| stmt_mentions(stmt, name))
+}
+
+fn stmt_mentions(stmt: &Stmt, name: &str) -> bool {
+    match &stmt.kind {
+        StmtKind::Decl { init, .. } => init.as_ref().is_some_and(|expr| expr_mentions(expr, name)),
+        StmtKind::Expr(expr) => expr_mentions(expr, name),
+        StmtKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            expr_mentions(cond, name)
+                || block_mentions(then_branch, name)
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|block| block_mentions(block, name))
+        }
+        StmtKind::While { cond, body } => expr_mentions(cond, name) || block_mentions(body, name),
+        StmtKind::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
+            init.as_ref().is_some_and(|stmt| stmt_mentions(stmt, name))
+                || cond.as_ref().is_some_and(|expr| expr_mentions(expr, name))
+                || step.as_ref().is_some_and(|expr| expr_mentions(expr, name))
+                || block_mentions(body, name)
+        }
+        StmtKind::DoWhile { body, cond } => block_mentions(body, name) || expr_mentions(cond, name),
+        StmtKind::Switch { scrutinee, cases } => {
+            expr_mentions(scrutinee, name)
+                || cases.iter().any(|case| block_mentions(&case.body, name))
+        }
+        StmtKind::Return(Some(expr)) => expr_mentions(expr, name),
+        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Empty => false,
+    }
+}
+
+fn expr_mentions(expr: &Expr, name: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Local(local) => local == name,
+        ExprKind::Member { base, .. } => expr_mentions(base, name),
+        ExprKind::Cond {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            expr_mentions(cond, name)
+                || expr_mentions(then_branch, name)
+                || expr_mentions(else_branch, name)
+        }
+        ExprKind::InitList(items) => items.iter().any(|item| expr_mentions(item, name)),
+        ExprKind::Unary { operand, .. } => expr_mentions(operand, name),
+        ExprKind::Binary { lhs, rhs, .. } | ExprKind::Assign { lhs, rhs, .. } => {
+            expr_mentions(lhs, name) || expr_mentions(rhs, name)
+        }
+        ExprKind::Index { base, index } => expr_mentions(base, name) || expr_mentions(index, name),
+        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_mentions(arg, name)),
+        ExprKind::Cast { expr, .. } | ExprKind::Paren(expr) => expr_mentions(expr, name),
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StringLit(_)
+        | ExprKind::CharLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Null
+        | ExprKind::Global(_)
+        | ExprKind::EnumConst { .. }
+        | ExprKind::Unsupported(_) => false,
+    }
+}
+
+/// The value of an integer literal under any casts or parentheses.
+fn int_literal(expr: &Expr) -> Option<i64> {
+    match &expr.kind {
+        ExprKind::IntLit(value) => Some(*value),
+        ExprKind::Paren(inner) | ExprKind::Cast { expr: inner, .. } => int_literal(inner),
         _ => None,
     }
 }

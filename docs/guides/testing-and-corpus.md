@@ -97,6 +97,14 @@ Selection criteria: open licenses permitting use in tests, buildable with CMake 
 
 ### 3.2 C++ corpus (L1 to L2)
 
+Status: **Outlined**, and gated by M6. Until the C++ core exists, the exporter
+refuses a C++ translation unit by name (exit code 3, "C++ input is not
+translated yet") and writes no AST for it; a database that lists both C and C++
+is refused as a whole. `ci/cpp-refusals.sh` pins that behaviour for a reference
+parameter, a class, an overload set, a template and a mixed database, so the
+corpus below can only start once a C++ construct translates deliberately rather
+than by being read as C.
+
 | Project                                | Why                           | Size class |
 | -------------------------------------- | ----------------------------- | ---------- |
 | Small class-hierarchy examples         | Inheritance and trait mapping | tiny       |

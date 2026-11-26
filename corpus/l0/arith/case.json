@@ -127,7 +127,7 @@
     {
       "function": "shift_assign",
       "args": [
-        -8,
+        8,
         2
       ]
     },

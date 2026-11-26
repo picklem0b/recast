@@ -63,3 +63,12 @@ jobs:
 
       - name: M1 exit criteria
         run: bash ci/m1-exit.sh
+
+      - name: M2 corpus
+        run: bash ci/m2-corpus.sh
+
+      - name: M2 refusals
+        run: bash ci/m2-refusals.sh
+
+      - name: C++ refusals
+        run: bash ci/cpp-refusals.sh

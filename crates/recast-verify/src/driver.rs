@@ -768,7 +768,7 @@ pub fn sweep(program: &Program, sweep: &Sweep, source: &Path) -> Result<Drivers,
     let _ = (ret_bits, ret_signed);
 
     let iterations = sweep.iterations;
-    let seed = 0x243F_6A88_85A3_08D3u64;
+    let seed = crate::SWEEP_SEED;
 
     let mut c = String::new();
     c.push_str("#include <stdint.h>\n#include <stdio.h>\n");

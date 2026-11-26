@@ -16,6 +16,10 @@ use serde::Serialize;
 /// Report schema name for the findings document.
 pub const FINDINGS_SCHEMA: &str = "recast-findings/1";
 
+/// The rule set this build evaluates. Reports hash this text so a result can
+/// be tied to the rules that produced it.
+pub const RULE_SET: &str = "M1 (UB-001, UB-005, UB-007, UB-008)";
+
 /// One analysis finding tied to a rule identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Finding {

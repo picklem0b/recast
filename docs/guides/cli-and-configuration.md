@@ -56,7 +56,11 @@ recast <command> [options]
 - `recast scan --generate-db`: observe a build to produce `compile_commands.json`.
 - `recast translate --faithful-only`: skip the idiom pass.
 - `recast verify --rungs V0,V1,V2`: limit rungs.
-- `recast explain --format json`.
+- `recast verify --no-hygiene` / `--no-sanitizers`: skip V1 or V4 for a measurement run; the report lists the rung as skipped, never as passed.
+- `recast verify --fuzz-executions <n>`: V3 inputs to generate (default 1000, `0` disables V3).
+- `recast verify --no-mutation` / `--max-mutants <n>` / `--min-kill-rate <pct>`: control operator mutation and its threshold.
+- `recast report`: re-render `report.md` and `report.sarif` from `report.json`; the claim-language lint must pass before either file is written.
+- `recast explain <item> --format json`.
 
 ### 1.3 Exit codes
 

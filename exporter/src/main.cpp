@@ -58,6 +58,10 @@ std::string tag_name(const clang::TagDecl *decl) {
 struct AstState {
   std::vector<Object> units;
   std::optional<Object> target;
+  /// Set when a translation unit was read but cannot be exported. The units
+  /// that were accepted are discarded: a partial export would be translated
+  /// and verified as if the refused unit did not exist.
+  std::string refused;
 };
 
 Object scalar(const char *kind, const char *spelling) {
@@ -86,7 +90,17 @@ Object span_json(clang::SourceLocation location, clang::ASTContext &context) {
 }
 
 Value type_json(clang::QualType type, clang::ASTContext &context) {
-  type = type.getNonReferenceType();
+  // A reference is C++ only. Dropping it would turn `int &r` into a value
+  // parameter that silently loses the write-back, so it stays an unknown type
+  // and the frontend refuses it by name. C++ translation units are refused
+  // before they reach this function; this is the guard for anything that
+  // slips past that check.
+  if (type->isReferenceType()) {
+    Object reference;
+    reference["kind"] = "unknown";
+    reference["spelling"] = type.getAsString();
+    return Value(std::move(reference));
+  }
 
   if (type->isVoidType()) {
     return Value(scalar("void", nullptr));
@@ -742,6 +756,19 @@ public:
       : state(state), file(std::move(file)) {}
 
   void HandleTranslationUnit(clang::ASTContext &context) override {
+    // The exporter reads C. The C++ core is milestone M6 (document 11), and
+    // until it exists the constructs C++ adds here -- references, classes,
+    // overloads, templates -- would either be dropped or read as C, which
+    // changes behavior instead of refusing it.
+    if (context.getLangOpts().CPlusPlus) {
+      if (state.refused.empty()) {
+        state.refused =
+            "C++ input is not translated yet: the C++ core is milestone M6 "
+            "(docs/project/roadmap.md); translate C sources at this build point";
+      }
+      return;
+    }
+
     if (!state.target.has_value()) {
       state.target = target_json(context);
     }
@@ -846,6 +873,11 @@ int main(int argc, char **argv) {
   int result = tool.run(&factory);
   if (result != 0) {
     return result;
+  }
+
+  if (!state.refused.empty()) {
+    llvm::errs() << "recast-exporter: " << state.refused << "\n";
+    return 3;
   }
 
   if (!state.target.has_value()) {

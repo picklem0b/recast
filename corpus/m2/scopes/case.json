@@ -1,0 +1,17 @@
+{
+  "schema": "recast-case/1",
+  "calls": [
+    { "function": "sibling_total", "args": [0] },
+    { "function": "sibling_total", "args": [10] },
+    { "function": "sibling_total", "args": [-5] },
+    { "function": "loop_totals", "args": [3] },
+    { "function": "loop_totals", "args": [0] },
+    { "function": "loop_totals", "args": [1] },
+    { "function": "mix", "args": [10, -3, 200] },
+    { "function": "mix", "args": [0, 0, 255] },
+    { "function": "mix", "args": [7, 5, 1] },
+    { "function": "scale", "args": [7, 3] },
+    { "function": "scale", "args": [-8, 2] },
+    { "function": "scale", "args": [5, 0] }
+  ]
+}

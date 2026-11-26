@@ -1,6 +1,6 @@
 # Repository layout
 
-Status: M1. The workspace, the L0 pipeline, the analysis crate and the V0 to V2 verification ladder exist. Planned crates that have no implementation yet contain a library stub.
+Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
 
 ## Tree
 
@@ -31,8 +31,11 @@ recast/
     recast-rt/                  # runtime shipped with generated code
     recast-verify/              # V0 to V2, differential drivers, mutation testing
       src/{lib,driver,mutation}.rs
+    recast-report/              # recast-report/1 types, gate profiles, report.md
+      src/{lib,gate}.rs
     recast-interop/             # shims, layout checks and build integration
-    recast-orchestrator/        # pipeline driver and cache
+    recast-orchestrator/        # pipeline driver, report assembly and cache
+      src/lib.rs
     recast-cli/                 # command line
       src/main.rs
       tests/cli.rs
@@ -48,6 +51,7 @@ recast/
     m1-exit.sh                  # M1 corpus, property and mutation criteria
     m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
     m2-refusals.sh              # the constructs outside the current M2 step are refused
+    cpp-refusals.sh             # C++ input is refused by name until the C++ core (M6)
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
@@ -94,8 +98,9 @@ The top-level `tests/` is not a Cargo target because the workspace root is not a
 | `recast-translate`    | Type and expression mapping, statement emission, Rust printing       | `src/{lib,rust}.rs`                                            |
 | `recast-rt`           | Runtime support for generated code: bytes, arena, checked, FFI, raw  | `src/lib.rs` (stub)                                            |
 | `recast-verify`       | V0 to V2 drivers, differential runs, property sweeps, mutation tests | `src/{lib,driver,mutation}.rs`                                 |
+| `recast-report`       | `recast-report/1` types, validation, rendering and gate profiles      | `src/{lib,gate}.rs`                                            |
 | `recast-interop`      | Shim generation, layout assertions and build-system integration      | `src/lib.rs` (stub)                                            |
-| `recast-orchestrator` | Pipeline driver, scheduler and content cache                        | `src/lib.rs` (stub)                                            |
+| `recast-orchestrator` | Pipeline driver, report assembly, scheduler and content cache        | `src/lib.rs`                                                   |
 | `recast-cli`          | Command parsing, output and exit codes                               | `src/main.rs`                                                  |
 | `recast-testkit`      | Snippet harness and golden runner                                    | `src/{lib,golden,harness}.rs`                                  |
 | `exporter`            | Clang AST export, macro records and target layout                    | `src/main.cpp`                                                 |
@@ -112,6 +117,8 @@ recast-frontend
 recast-analysis
 recast-translate
 recast-verify
+recast-report
+recast-orchestrator
 recast-interop
 recast-orchestrator
 recast-cli
@@ -239,3 +246,15 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.2.25`            | M2: a record behind a pointer, and a driver that observes its fields.    |
 | `v1.2.26`            | M2 audit: the tag lists include `v1.2.25`.                               |
 | `v1.3.0`             | M3 opens: the workspace version is 1.3.0 and the opening audit records the gap. |
+| `v1.3.1`             | The README banner and stack badges.                                       |
+| `v1.3.2`             | No AI attribution in commit messages.                                    |
+| `v1.3.3`             | M3: `recast-report/1`, report artifacts and the safety gate.             |
+| `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
+| `v1.3.5`             | M3 repair: the report's `unsafe_inventory` key matches document 07.      |
+| `v1.3.6`             | M3: V1 hygiene, V3 fuzzing, V4 safety checks, SARIF and the `run`, `explain` and `diff` commands. |
+| `v1.3.7`             | M3 repair: C++ input is refused by name.                                  |
+| `v1.3.8`             | M3: CI runs the M2 corpus, M2 refusals and C++ refusals; `corpus/m2/scan`. |
+| `v1.3.9`             | M3 repair: the C++ refusal check names the language with `-x c++`.      |
+| `v1.3.10`            | M3 audit: the page and tag lists record `v1.3.7` to `v1.3.9`.           |
+| `v1.3.11`            | M3 repair: a floating compound assignment and a shadowed local are refused by name; `corpus/m2/scopes`. |
+| `v1.3.12`            | M3 repair: `UB-005` no longer reports the base of a store as a read.    |

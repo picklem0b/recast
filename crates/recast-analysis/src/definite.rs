@@ -267,12 +267,58 @@ impl Checker<'_> {
                 self.lhs(inner, assigned, span, read_target)
             }
             ExprKind::Index { base, index } => {
-                self.expr(base, assigned, span);
+                // `a[0] = 1` stores into an element: the array has to exist, but
+                // the store does not read it. The subscript reaches TIR as
+                // `index (cast *mut T a) 0`, so the decay is looked through. A
+                // pointer base is different -- reading the pointer is what
+                // makes the store valid -- so it is still checked, and so is a
+                // compound assignment that reads the element it writes.
+                if read_target {
+                    self.expr(base, assigned, span);
+                } else if let Some(array) = decayed_array(self.program, base) {
+                    self.lhs(array, assigned, span, false);
+                } else if self.is_pointer(base) {
+                    self.expr(base, assigned, span);
+                } else {
+                    self.lhs(base, assigned, span, false);
+                }
                 self.expr(index, assigned, span);
             }
-            ExprKind::Member { base, .. } => self.expr(base, assigned, span),
+            ExprKind::Member { base, arrow, .. } => {
+                if *arrow || read_target {
+                    // `p->x` reads the pointer to find the record, and a
+                    // compound assignment reads the place it writes.
+                    self.expr(base, assigned, span);
+                } else {
+                    // `p.x = 1` writes a field; it does not read the record.
+                    self.lhs(base, assigned, span, false);
+                }
+            }
             _ => self.expr(expr, assigned, span),
         }
+    }
+
+    /// A pointer expression must be read to be followed; an array or record
+    /// expression used as the base of a store is not read.
+    fn is_pointer(&self, expr: &Expr) -> bool {
+        matches!(
+            self.program.types.canonical(expr.ty),
+            Some(Type::Pointer { .. })
+        )
+    }
+}
+
+/// The array behind an implicit array-to-pointer decay. `a[0]` reaches TIR as
+/// `index (cast *mut T a) 0`, and that cast does not read the array.
+fn decayed_array<'a>(program: &recast_ir::Program, expr: &'a Expr) -> Option<&'a Expr> {
+    match &expr.kind {
+        ExprKind::Cast { expr: inner, .. }
+            if matches!(program.types.canonical(inner.ty), Some(Type::Array { .. })) =>
+        {
+            Some(inner)
+        }
+        ExprKind::Paren(inner) => decayed_array(program, inner),
+        _ => None,
     }
 }
 
