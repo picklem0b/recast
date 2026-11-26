@@ -77,6 +77,8 @@ pub fn lower(ast: &schema::Ast) -> Result<Program, FrontendError> {
         globals: BTreeMap::new(),
         enumerators: BTreeMap::new(),
         locals: BTreeSet::new(),
+        scopes: Vec::new(),
+        current_function: None,
     };
 
     for unit in &ast.translation_units {
@@ -140,6 +142,13 @@ struct Lowerer {
     globals: BTreeMap<String, ItemId>,
     enumerators: BTreeMap<String, (ItemId, i64)>,
     locals: BTreeSet<String>,
+    /// The local scopes of the function being lowered, outermost first. The TIR
+    /// block is flat, so a redeclaration in a nested scope would become a Rust
+    /// `let` that shadows the outer name for every later use, which is a
+    /// different program. Shadowing is refused until scopes exist.
+    scopes: Vec<BTreeSet<String>>,
+    /// The function being lowered, for `functions[<name>]` paths in errors.
+    current_function: Option<String>,
 }
 
 impl Lowerer {
@@ -244,9 +253,15 @@ impl Lowerer {
         let ret = self.lower_type(&function.return_type);
         let mut params = Vec::with_capacity(function.params.len());
         self.locals.clear();
+        self.scopes.clear();
+        self.current_function = Some(function.name.clone());
+        self.scopes.push(BTreeSet::new());
         for param in &function.params {
             if let Some(name) = &param.name {
                 self.locals.insert(name.clone());
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(name.clone());
+                }
             }
             params.push(Param {
                 name: param.name.clone(),
@@ -347,7 +362,10 @@ impl Lowerer {
         nodes: &mut NodeIds,
     ) -> Result<Block, FrontendError> {
         let mut block = Block::default();
-        self.lower_into(&mut block, stmt, file, nodes)?;
+        self.scopes.push(BTreeSet::new());
+        let lowered = self.lower_into(&mut block, stmt, file, nodes);
+        self.scopes.pop();
+        lowered?;
         Ok(block)
     }
 
@@ -361,10 +379,18 @@ impl Lowerer {
         nodes: &mut NodeIds,
     ) -> Result<(), FrontendError> {
         if let schema::Stmt::Compound { stmts } = stmt {
+            // A bare block is a scope of its own even though its statements
+            // are spliced into the TIR block.
+            self.scopes.push(BTreeSet::new());
+            let mut lowered = Ok(());
             for stmt in stmts {
-                self.lower_into(block, stmt, file, nodes)?;
+                lowered = self.lower_into(block, stmt, file, nodes);
+                if lowered.is_err() {
+                    break;
+                }
             }
-            return Ok(());
+            self.scopes.pop();
+            return lowered;
         }
         if let Some(lowered) = self.lower_stmt(stmt, file, nodes)? {
             block.stmts.push(lowered);
@@ -399,7 +425,27 @@ impl Lowerer {
                     Some(init) => Some(self.lower_expr(init, nodes)?),
                     None => None,
                 };
+                if self
+                    .scopes
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .any(|scope| scope.contains(name))
+                {
+                    return Err(FrontendError::new(
+                        format!(
+                            "functions[{}]",
+                            self.current_function.as_deref().unwrap_or("<unknown>")
+                        ),
+                        format!(
+                            "`{name}` is redeclared in a nested block; shadowing needs the M2 scoping model"
+                        ),
+                    ));
+                }
                 self.locals.insert(name.clone());
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(name.clone());
+                }
                 (
                     id,
                     StmtKind::Decl {
@@ -454,19 +500,27 @@ impl Lowerer {
                 span,
             } => {
                 let id = nodes.next();
-                let init = match init.as_deref() {
-                    Some(init) => self.lower_stmt(init, file, nodes)?.map(Box::new),
-                    None => None,
-                };
-                let cond = match cond {
-                    Some(cond) => Some(self.lower_condition(cond, nodes)?),
-                    None => None,
-                };
-                let step = match step {
-                    Some(step) => Some(self.lower_expr(step, nodes)?),
-                    None => None,
-                };
-                let body = self.lower_block(body, file, nodes)?;
+                // The init declaration is scoped to the loop, so a later local
+                // with the same name is shadowing, not a reuse.
+                self.scopes.push(BTreeSet::new());
+                let lowered = (|| {
+                    let init = match init.as_deref() {
+                        Some(init) => self.lower_stmt(init, file, nodes)?.map(Box::new),
+                        None => None,
+                    };
+                    let cond = match cond {
+                        Some(cond) => Some(self.lower_condition(cond, nodes)?),
+                        None => None,
+                    };
+                    let step = match step {
+                        Some(step) => Some(self.lower_expr(step, nodes)?),
+                        None => None,
+                    };
+                    let body = self.lower_block(body, file, nodes)?;
+                    Ok::<_, FrontendError>((init, cond, step, body))
+                })();
+                self.scopes.pop();
+                let (init, cond, step, body) = lowered?;
                 (
                     id,
                     StmtKind::For {
@@ -819,6 +873,28 @@ impl Lowerer {
             schema::ExprKind::Assign { op, lhs, rhs } => {
                 let lhs = self.lower_expr(lhs, nodes)?;
                 let mut rhs = self.lower_expr(rhs, nodes)?;
+                // `x *= 1.5` is computed in double and converted back, so
+                // converting the operand first would multiply by one. The TIR
+                // has no floating arithmetic yet, so this is refused instead
+                // of lowered to something that computes a different value.
+                if op != "="
+                    && matches!(
+                        self.program.types.canonical(rhs.ty),
+                        Some(Type::Float { .. })
+                    )
+                    && !matches!(
+                        self.program.types.canonical(lhs.ty),
+                        Some(Type::Float { .. })
+                    )
+                {
+                    return Err(FrontendError::new(
+                        format!(
+                            "functions[{}]",
+                            self.current_function.as_deref().unwrap_or("<unknown>")
+                        ),
+                        "a compound assignment on an integer with a floating right operand needs the M2 numeric model".to_string(),
+                    ));
+                }
                 // `x += 1` computes in x's type; C's node carries the
                 // unconverted literal, so the conversion is made explicit here.
                 if self.program.types.canonical(lhs.ty) != self.program.types.canonical(rhs.ty) {

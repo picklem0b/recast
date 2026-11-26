@@ -256,3 +256,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.8`             | M3: CI runs the M2 corpus, M2 refusals and C++ refusals; `corpus/m2/scan`. |
 | `v1.3.9`             | M3 repair: the C++ refusal check names the language with `-x c++`.      |
 | `v1.3.10`            | M3 audit: the page and tag lists record `v1.3.7` to `v1.3.9`.           |
+| `v1.3.11`            | M3 repair: a floating compound assignment and a shadowed local are refused by name; `corpus/m2/scopes`. |
