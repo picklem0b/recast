@@ -51,6 +51,7 @@ recast/
     m1-exit.sh                  # M1 corpus, property and mutation criteria
     m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
     m2-refusals.sh              # the constructs outside the current M2 step are refused
+    cpp-refusals.sh             # C++ input is refused by name until the C++ core (M6)
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
@@ -251,3 +252,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.4`             | M3 audit: the page and tag lists record `v1.3.3`.                        |
 | `v1.3.5`             | M3 repair: the report's `unsafe_inventory` key matches document 07.      |
 | `v1.3.6`             | M3: V1 hygiene, V3 fuzzing, V4 safety checks, SARIF and the `run`, `explain` and `diff` commands. |
+| `v1.3.7`             | M3 repair: C++ input is refused by name, and CI runs the M2 and C++ refusal checks. |
