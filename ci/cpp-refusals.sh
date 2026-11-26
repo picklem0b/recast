@@ -38,6 +38,12 @@ compdb() {
 import json, os, sys
 
 directory, std, *names = sys.argv[1:]
+
+
+def compiler_for(std):
+    # clang++ is clang with -x c++. Naming the language explicitly keeps the
+    # check independent of whether the host ships the clang++ driver.
+    return "clang" if std == "c11" else "clang -x c++"
 commands = []
 for name in names:
     source = os.path.join(directory, name)
@@ -45,7 +51,7 @@ for name in names:
         {
             "directory": directory,
             "file": source,
-            "command": f"clang{'' if std == 'c11' else '++'} -std={std} -c {source} -o {source}.o",
+            "command": compiler_for(std) + f" -std={std} -c {source} -o {source}.o",
         }
     )
 with open(os.path.join(directory, "compile_commands.json"), "w", encoding="utf-8") as handle:
@@ -152,7 +158,7 @@ directory = sys.argv[1]
 commands = []
 for name, std in (("plain.c", "c11"), ("extra.cpp", "c++17")):
     source = os.path.join(directory, name)
-    compiler = "clang" if std == "c11" else "clang++"
+    compiler = "clang" if std == "c11" else "clang -x c++"
     commands.append(
         {
             "directory": directory,
