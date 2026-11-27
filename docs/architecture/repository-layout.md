@@ -54,6 +54,7 @@ recast/
     cpp-refusals.sh             # C++ input is refused by name until the C++ core (M6)
     m3-mutation.sh              # M3 mutation threshold across V2 to V4 on the M2 corpus
     m3-exit.sh                  # M3 exit criteria: threshold plus one-step `recast run`
+    miri.sh                     # V4 Miri check for the nightly CI job
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
@@ -263,3 +264,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.13`            | M3: operator mutation across the V2 calls, V2 sweeps and V3 fuzz inputs, per-rung counts, and the 98% threshold on the M2 corpus. |
 | `v1.3.14`            | M3 repair: `recast run` exports from a compile database, and `ci/m3-exit.sh` checks the exit criteria end to end. |
 | `v1.3.15`            | M3: V4 gets a Miri test target with one test per V2 call, run when the host provides `cargo miri`. |
+| `v1.3.16`            | CI: a nightly `miri` job runs the V4 Miri check; the other jobs keep the pinned stable toolchain. |

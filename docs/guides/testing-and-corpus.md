@@ -187,8 +187,9 @@ A release candidate MUST satisfy:
 | -------- | ------------ | ------------------------------------------------------------------------- |
 | Fast     | Every commit | Build, L1, L2, L3, small L4, small L9, lints, docs check                  |
 | Nightly  | Scheduled    | L4 full, L5, L6 (small and medium corpus), L8, L9 corpus, mutation subset |
-| Weekly   | Scheduled    | L6 full corpus, L7, L10, full mutation suite, fuzzing campaigns           |
-| Release  | Tag          | Everything plus reproducible-build check and artifact signing             |
+| Weekly   | Scheduled    | L6 full corpus, L7, L10, full mutation suite, fuzzing campaigns           || Release  | Tag          | Everything plus reproducible-build check and artifact signing |
+
+The `miri` job in `.github/workflows/ci.yml` runs V4's Miri target on a nightly toolchain for every push and pull request; `ci/miri.sh` fails if Miri records a note instead of a pass.
 
 Failures in Nightly or Weekly create tracked issues automatically with the reproducer attached.
 

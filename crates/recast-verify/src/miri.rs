@@ -164,16 +164,27 @@ pub fn run(options: &Options, target: &Target) -> Result<Check, Error> {
 }
 
 /// The sandbox clears the environment, but Cargo needs the toolchain variables
-/// it was launched with. None of these are secrets; they point at the toolchain.
+/// it was launched with. `RUSTUP_TOOLCHAIN` matters when the repository pins a
+/// stable toolchain and Miri lives on nightly: without it, the copy under
+/// `recast-out/` would inherit the pin and look for a `cargo-miri` the pinned
+/// toolchain does not have. None of these are secrets; they point at the
+/// toolchain.
 fn toolchain_environment() -> Vec<(String, String)> {
-    ["HOME", "RUSTUP_HOME", "CARGO_HOME", "PATH", "MIRI_SYSROOT"]
-        .iter()
-        .filter_map(|key| {
-            std::env::var(key)
-                .ok()
-                .map(|value| ((*key).to_string(), value))
-        })
-        .collect()
+    [
+        "HOME",
+        "RUSTUP_HOME",
+        "CARGO_HOME",
+        "PATH",
+        "MIRI_SYSROOT",
+        "RUSTUP_TOOLCHAIN",
+    ]
+    .iter()
+    .filter_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| ((*key).to_string(), value))
+    })
+    .collect()
 }
 
 /// The sandbox starts elsewhere, and its environment has no `PATH`, so a bare
