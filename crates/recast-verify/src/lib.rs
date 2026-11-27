@@ -16,6 +16,7 @@ mod mutation;
 pub mod safety;
 pub mod sandbox;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -125,14 +126,33 @@ impl Options {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MutationReport {
     pub generated: usize,
+    /// Killed by a wrong value, a panic or a timeout on a covered input.
     pub killed_by_behavior: usize,
     pub killed_by_compile: usize,
+    /// Which input set caught each mutant: `v2-calls`, `v2-sweeps` or
+    /// `v3-fuzz`. Every mutant run is built with overflow checks and debug
+    /// assertions on, so these are also V4's checks; a wrong value counts the
+    /// same as a checked panic.
+    pub by_rung: BTreeMap<String, usize>,
+    /// How many of the behavioral kills were a panic or a timeout rather than
+    /// a different value.
+    pub killed_by_check: usize,
     pub survived: Vec<String>,
 }
 
 impl MutationReport {
     pub fn killed(&self) -> usize {
         self.killed_by_behavior + self.killed_by_compile
+    }
+
+    /// The per-rung counts as a sorted list, so a caller can print them in a
+    /// fixed order.
+    pub fn rungs(&self) -> Vec<(&str, usize)> {
+        const ORDER: [&str; 3] = ["v2-calls", "v2-sweeps", "v3-fuzz"];
+        ORDER
+            .iter()
+            .filter_map(|rung| self.by_rung.get(*rung).map(|count| (*rung, *count)))
+            .collect()
     }
 
     /// Kill rate in percent, including mutants that fail to compile.
@@ -271,6 +291,14 @@ pub fn verify(
 
     let c_run = run(&c_binary)?;
     let rust_run = run(&rust_binary)?;
+    // Every input set the ladder executed is a place a mutant can be caught.
+    // Mutation reuses the drivers and their C baselines rather than inventing
+    // new inputs, so its measurement is exactly the evidence V2 and V3 supply.
+    let mut mutation_inputs = vec![mutation::Input {
+        rung: "v2-calls",
+        driver: rust_driver.clone(),
+        expected: c_run.clone(),
+    }];
     let calls_total = case.calls.len();
     let calls_passed = if c_run == rust_run {
         calls_total
@@ -297,7 +325,13 @@ pub fn verify(
         let rust_bin = options.work.join(format!("{stem}-rust"));
         compile_c(options, &c_path, &c_bin)?;
         compile_rust_driver(options, &rust_path, &rlib, &rust_bin)?;
-        let passed = run(&c_bin)? == run(&rust_bin)?;
+        let c_sweep = run(&c_bin)?;
+        let passed = c_sweep == run(&rust_bin)?;
+        mutation_inputs.push(mutation::Input {
+            rung: "v2-sweeps",
+            driver: rust_path.clone(),
+            expected: c_sweep,
+        });
         if !passed {
             failures.push(format!(
                 "property sweep of {} diverged after {} iterations",
@@ -311,11 +345,22 @@ pub fn verify(
         });
     }
 
-    let fuzz = if options.fuzz_executions > 0 {
+    let fuzz_run = if options.fuzz_executions > 0 {
         fuzz::run(options, program, case, source, options.fuzz_executions)?
     } else {
-        Vec::new()
+        None
     };
+    let fuzz = fuzz_run
+        .as_ref()
+        .map(|fuzz| fuzz.reports.clone())
+        .unwrap_or_default();
+    if let Some(fuzz) = &fuzz_run {
+        mutation_inputs.push(mutation::Input {
+            rung: "v3-fuzz",
+            driver: fuzz.driver.clone(),
+            expected: fuzz.expected.clone(),
+        });
+    }
     if !fuzz.iter().all(|fuzz| fuzz.passed) {
         failures.push("V3 differential fuzzing diverged".to_string());
     }
@@ -334,16 +379,12 @@ pub fn verify(
     let mutations = if options.mutation {
         // Mutation testing measures the strength of the differential inputs; a
         // survivor is a quality signal, not a wrong translation. The CLI decides
-        // whether the configured kill rate is met (roadmap M1: 95%).
-        let report = mutation::run_mutation(
+        // whether the configured kill rate is met (M1: 95%, M3: 98%).
+        Some(mutation::run_mutation(
             options,
-            program,
-            case,
-            source,
             &crate_dir.join("src/lib.rs"),
-            &c_run,
-        )?;
-        Some(report)
+            &mutation_inputs,
+        )?)
     } else {
         None
     };
@@ -524,10 +565,31 @@ mod tests {
             generated: 4,
             killed_by_behavior: 2,
             killed_by_compile: 1,
+            by_rung: BTreeMap::from([
+                ("v2-calls".to_string(), 1),
+                ("v2-sweeps".to_string(), 0),
+                ("v3-fuzz".to_string(), 1),
+            ]),
+            killed_by_check: 0,
             survived: vec!["m003".to_string()],
         };
         assert_eq!(mutations.killed(), 3);
         assert_eq!(mutations.kill_rate(), 75.0);
+    }
+
+    #[test]
+    fn rung_counts_are_reported_in_ladder_order() {
+        let mutations = MutationReport {
+            generated: 3,
+            killed_by_behavior: 3,
+            killed_by_compile: 0,
+            by_rung: BTreeMap::from([("v3-fuzz".to_string(), 1), ("v2-calls".to_string(), 2)]),
+            killed_by_check: 1,
+            survived: Vec::new(),
+        };
+        assert_eq!(mutations.rungs(), vec![("v2-calls", 2), ("v3-fuzz", 1)]);
+        let attributed: usize = mutations.rungs().iter().map(|(_, count)| count).sum();
+        assert_eq!(attributed, mutations.killed_by_behavior);
     }
 
     #[test]
@@ -536,6 +598,8 @@ mod tests {
             generated: 2,
             killed_by_behavior: 1,
             killed_by_compile: 0,
+            by_rung: BTreeMap::from([("v2-calls".to_string(), 1)]),
+            killed_by_check: 0,
             survived: vec!["m001".to_string()],
         };
         assert!(report(Some(mutations)).passed());

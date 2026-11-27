@@ -443,6 +443,9 @@ pub fn build_report(input: &ReportInput<'_>) -> Report {
                     killed: mutation.killed(),
                     survived: mutation.survived.len(),
                     kill_rate: mutation.kill_rate(),
+                    by_rung: mutation.by_rung.clone(),
+                    killed_by_compile: mutation.killed_by_compile,
+                    killed_by_check: mutation.killed_by_check,
                 }
             }),
         },

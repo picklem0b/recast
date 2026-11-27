@@ -1,6 +1,6 @@
 # Repository layout
 
-Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
+Status: M3 exit criteria met at `v1.3.13`; build items outside them remain. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, the safety gate, and operator mutation measured per rung exist. Planned crates that have no implementation yet contain a library stub.
 
 ## Tree
 
@@ -52,6 +52,7 @@ recast/
     m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
     m2-refusals.sh              # the constructs outside the current M2 step are refused
     cpp-refusals.sh             # C++ input is refused by name until the C++ core (M6)
+    m3-mutation.sh              # M3 mutation threshold across V2 to V4 on the M2 corpus
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
@@ -258,3 +259,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.10`            | M3 audit: the page and tag lists record `v1.3.7` to `v1.3.9`.           |
 | `v1.3.11`            | M3 repair: a floating compound assignment and a shadowed local are refused by name; `corpus/m2/scopes`. |
 | `v1.3.12`            | M3 repair: `UB-005` no longer reports the base of a store as a read.    |
+| `v1.3.13`            | M3: operator mutation across the V2 calls, V2 sweeps and V3 fuzz inputs, per-rung counts, and the 98% threshold on the M2 corpus. |

@@ -164,6 +164,8 @@ Tracked per run, per project, and over time:
 
 A suite of **mutants** applied to generated Rust: change `<` to `<=`, drop a wrapping operation, swap argument order, remove a bounds guard, flip a tier choice, reorder destruction. The verifier must reject each mutant that changes observable behavior on at least one covered input. Report the kill rate per rung (V2, V3, V4). Mutants surviving all rungs are either equivalent mutants (reviewed and tagged) or evidence of weak verification; the latter produce new tests.
 
+The harness in `recast-verify` applies operator mutations to the generated library and rebuilds it against every input set the ladder executed: the V2 calls, the V2 property sweeps and the V3 fuzz driver, each compared with the C output for the same inputs. A kill is attributed to the first rung whose inputs disagree, and every mutant build and run carries the checked configuration (overflow checks, debug assertions), so a panic or a timeout is a V4 checked kill as well as a behavioral one and is counted under `killed_by_check`. A mutant the build rejects is a kill too, counted under `killed_by_compile`, but it is not behavioral evidence; `killed` is the sum of the per-rung behavioral counts and the build rejections, so the arithmetic is visible in the report. `recast-out/verify/mutants/kills.tsv` records the rung, the cause and the mutation for every kill, with `compile`/`build` in the rung and cause columns for a build rejection, and a survivor is listed in the report. `ci/m3-mutation.sh` asserts the 98% M3 threshold on the M2 corpus and prints the per-rung and build-rejection totals.
+
 ---
 
 ## 6. Release criteria
