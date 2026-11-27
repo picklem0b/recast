@@ -53,7 +53,7 @@ impl Sandbox {
 
     /// What this runner does not isolate, in the report's words.
     pub fn limitations(&self) -> &'static str {
-        "runs use a scratch directory, a cleared environment, CPU, memory and file-size limits, and a timeout; network and mount isolation need a container runtime that this build does not assume"
+        "runs use a scratch directory, a cleared environment (toolchain checks keep the variables Cargo needs), CPU, memory and file-size limits, and a timeout; network and mount isolation need a container runtime that this build does not assume"
     }
 
     /// Run `binary` with no arguments.
@@ -61,8 +61,20 @@ impl Sandbox {
         self.run_with_args(binary, &[])
     }
 
-    /// Run `binary` with `args`, capturing stdout and stderr.
+    /// Run `binary` with `args` in a cleared environment.
     pub fn run_with_args(&self, binary: &Path, args: &[String]) -> Result<SandboxOutput, Error> {
+        self.run_with_env(binary, args, &[])
+    }
+
+    /// Run `binary` with `args` and the `env` variables, and nothing else.
+    /// A Cargo check needs `HOME`, `PATH` and the toolchain variables; the
+    /// compiled programs this runner executes need none.
+    pub fn run_with_env(
+        &self,
+        binary: &Path,
+        args: &[String],
+        env: &[(String, String)],
+    ) -> Result<SandboxOutput, Error> {
         // The process starts in the scratch directory, so a relative binary or
         // scratch path would resolve there instead of against the caller's
         // working directory. Pin both to absolute paths first.
@@ -92,6 +104,7 @@ impl Sandbox {
             .args(args)
             .current_dir(&scratch)
             .env_clear()
+            .envs(env.iter().map(|(key, value)| (key, value)))
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
@@ -151,6 +164,23 @@ mod tests {
             .expect("run");
         assert!(output.success(), "{output:?}");
         assert_eq!(output.stdout, "ok");
+    }
+
+    #[test]
+    fn only_the_passed_environment_variables_survive() {
+        let dir = std::env::temp_dir().join(format!("recast-sandbox-env-{}", std::process::id()));
+        let sandbox = Sandbox::new(dir);
+        let output = sandbox
+            .run_with_env(
+                Path::new("/bin/sh"),
+                &[
+                    "-c".to_string(),
+                    "printf %s \"$RECAST_SANDBOX_PROBE\"".to_string(),
+                ],
+                &[("RECAST_SANDBOX_PROBE".to_string(), "inner".to_string())],
+            )
+            .expect("run");
+        assert_eq!(output.stdout, "inner");
     }
 
     #[test]

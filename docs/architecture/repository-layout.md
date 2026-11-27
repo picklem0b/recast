@@ -29,8 +29,8 @@ recast/
       src/{lib,rust}.rs
       tests/translation.rs
     recast-rt/                  # runtime shipped with generated code
-    recast-verify/              # V0 to V2, differential drivers, mutation testing
-      src/{lib,driver,mutation}.rs
+    recast-verify/              # V0 to V4, differential drivers, mutation and Miri
+      src/{lib,driver,fuzz,hygiene,miri,mutation,safety,sandbox}.rs
     recast-report/              # recast-report/1 types, gate profiles, report.md
       src/{lib,gate}.rs
     recast-interop/             # shims, layout checks and build integration
@@ -99,7 +99,7 @@ The top-level `tests/` is not a Cargo target because the workspace root is not a
 | `recast-analysis`     | CFG, liveness, definite assignment and UB checks for the M1 subset   | `src/{cfg,liveness,definite,ub}.rs`                            |
 | `recast-translate`    | Type and expression mapping, statement emission, Rust printing       | `src/{lib,rust}.rs`                                            |
 | `recast-rt`           | Runtime support for generated code: bytes, arena, checked, FFI, raw  | `src/lib.rs` (stub)                                            |
-| `recast-verify`       | V0 to V2 drivers, differential runs, property sweeps, mutation tests | `src/{lib,driver,mutation}.rs`                                 |
+| `recast-verify`       | V0 to V4 drivers, differential runs, sweeps, mutation and Miri       | `src/{lib,driver,fuzz,hygiene,miri,mutation,safety,sandbox}.rs` |
 | `recast-report`       | `recast-report/1` types, validation, rendering and gate profiles      | `src/{lib,gate}.rs`                                            |
 | `recast-interop`      | Shim generation, layout assertions and build-system integration      | `src/lib.rs` (stub)                                            |
 | `recast-orchestrator` | Pipeline driver, report assembly, scheduler and content cache        | `src/lib.rs`                                                   |
@@ -262,3 +262,4 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.12`            | M3 repair: `UB-005` no longer reports the base of a store as a read.    |
 | `v1.3.13`            | M3: operator mutation across the V2 calls, V2 sweeps and V3 fuzz inputs, per-rung counts, and the 98% threshold on the M2 corpus. |
 | `v1.3.14`            | M3 repair: `recast run` exports from a compile database, and `ci/m3-exit.sh` checks the exit criteria end to end. |
+| `v1.3.15`            | M3: V4 gets a Miri test target with one test per V2 call, run when the host provides `cargo miri`. |

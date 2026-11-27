@@ -12,6 +12,7 @@
 mod driver;
 pub mod fuzz;
 pub mod hygiene;
+mod miri;
 mod mutation;
 pub mod safety;
 pub mod sandbox;
@@ -366,7 +367,7 @@ pub fn verify(
     }
 
     let safety = if options.sanitizers {
-        Some(safety::run(options, &c_driver)?)
+        Some(safety::run(options, program, case, crate_dir, &c_driver)?)
     } else {
         None
     };

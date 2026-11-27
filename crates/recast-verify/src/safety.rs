@@ -9,11 +9,12 @@
 use std::path::Path;
 use std::process::Command;
 
+use recast_ir::Program;
 use serde::Serialize;
 
 use crate::hygiene::Check;
 use crate::sandbox::Sandbox;
-use crate::{write, Error, Options};
+use crate::{miri, write, Case, Error, Options};
 
 /// The V4 result for one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -29,16 +30,24 @@ pub struct SafetyReport {
 
 impl SafetyReport {
     /// The checks that ran passed. An unavailable ASan or Miri is a note, not
-    /// a pass, and is listed in `notes`.
+    /// a pass, and is listed in `notes`; a Miri run that found undefined
+    /// behavior fails V4.
     pub fn passed(&self) -> bool {
         self.ubsan.passed
             && self.overflow_checks.passed
             && self.asan.as_ref().is_none_or(|check| check.passed)
+            && self.miri.as_ref().is_none_or(|check| check.passed)
     }
 }
 
 /// Run V4 against the generated crate and the C driver.
-pub fn run(options: &Options, c_driver: &Path) -> Result<SafetyReport, Error> {
+pub fn run(
+    options: &Options,
+    program: &Program,
+    case: &Case,
+    crate_dir: &Path,
+    c_driver: &Path,
+) -> Result<SafetyReport, Error> {
     let directory = options.work.join("v4");
     std::fs::create_dir_all(&directory).map_err(|error| Error::Io {
         path: directory.clone(),
@@ -67,18 +76,20 @@ pub fn run(options: &Options, c_driver: &Path) -> Result<SafetyReport, Error> {
             None
         }
     };
-    let miri = match miri_available(options) {
-        true => {
+    let miri_target = miri::prepare(options, crate_dir, program, case)?;
+    let miri = match &miri_target {
+        None => {
+            notes.push("the case defines no calls, so Miri has nothing to interpret".to_string());
+            None
+        }
+        Some(_) if !miri::available(options) => {
             notes.push(
-                "Miri is installed but the generated crate has no test target to run under it"
+                "cargo miri is not installed on this host; UBSan and overflow-checked runs are the V4 evidence"
                     .to_string(),
             );
             None
         }
-        false => {
-            notes.push("cargo miri is not installed on this host".to_string());
-            None
-        }
+        Some(target) => Some(miri::run(options, target)?),
     };
     let overflow_checks = Check {
         passed: true,
@@ -187,14 +198,4 @@ fn sanitizer_probe(options: &Options, directory: &Path, sandbox: &Sandbox) -> Re
         .run(&binary)
         .map(|output| output.success())
         .unwrap_or(false))
-}
-
-fn miri_available(options: &Options) -> bool {
-    Command::new(&options.cargo)
-        .args(["miri", "--version"])
-        .output()
-        .map(|output| {
-            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("miri")
-        })
-        .unwrap_or(false)
 }

@@ -83,6 +83,11 @@ with open(f"{out}/report/report.md", encoding="utf-8") as handle:
 assert "## Limitations" in markdown, "report.md has no limitations section"
 assert "do not prove equivalence" in markdown, "the limitations statement is missing"
 assert "| Mutants rejected by the build |" in markdown, "report.md omits the build rejections"
+
+with open(f"{out}/verify/v4/miri/crate/tests/v4_miri.rs", encoding="utf-8") as handle:
+    miri_tests = handle.read()
+assert "#[test]" in miri_tests, "the Miri test target has no test"
+assert "mod generated" in miri_tests, "the Miri target does not include the library"
 PY
 
 echo "M3 exit criteria pass: mutation threshold, validated report, determinism and one-step run"
