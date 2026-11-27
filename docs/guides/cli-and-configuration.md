@@ -22,7 +22,7 @@ recast <command> [options]
 | `recast analyze`           | Frontend plus analysis; writes TIR and fact tables, plus findings. No Rust output                                                         |
 | `recast translate`         | Full pipeline up to Rust generation (frontend, analysis, translation). No verification                                                    |
 | `recast verify`            | Run the verification ladder on an existing output and write the report                                                                    |
-| `recast run`               | `translate` then `verify` then safety gate. The normal command                                                                            |
+| `recast run`               | `export` (when `--compdb` is given), `translate`, `verify` and safety gate. The normal command                                            |
 | `recast gate`              | Re-evaluate the safety gate on existing evidence with a different profile                                                                 |
 | `recast report`            | Re-render `report.md` / SARIF from `report.json`                                                                                          |
 | `recast explain <item>`    | Print the explanation record for an item (rules, facts, rejected alternatives)                                                            |
@@ -37,7 +37,7 @@ recast <command> [options]
 ```
 --config <path>          recast.toml location (default: ./recast.toml)
 --contracts <path>       contracts file (default: ./recast-contracts.toml)
---compdb <path>          compile_commands.json
+--compdb <path>          compile_commands.json; `run` exports from it first
 --out <dir>              output directory (default: ./recast-out)
 --profile <name>         gate profile override
 --module <name>          restrict to a module (repeatable)

@@ -845,6 +845,15 @@ fn run_command(
         }
     };
 
+    // `run` is the one-step workflow, so a compile database given on the same
+    // command line exports first. Without one, the AST must already exist, as
+    // for `translate`.
+    if global.compdb.is_some() {
+        let exported = export(global)?;
+        if exported != EXIT_OK {
+            return Ok(exported);
+        }
+    }
     let translated = translate_command(global)?;
     if translated != EXIT_OK {
         return Ok(translated);

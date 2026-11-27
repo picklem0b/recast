@@ -67,8 +67,8 @@ jobs:
       - name: M2 corpus
         run: bash ci/m2-corpus.sh
 
-      - name: M3 mutation criteria
-        run: bash ci/m3-mutation.sh
+      - name: M3 exit criteria
+        run: bash ci/m3-exit.sh
 
       - name: M2 refusals
         run: bash ci/m2-refusals.sh
