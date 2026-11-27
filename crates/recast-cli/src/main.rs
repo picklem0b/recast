@@ -746,6 +746,21 @@ fn verify_command(
                         mutations.kill_rate(),
                         mutations.killed_by_compile
                     );
+                    let rungs = mutations
+                        .rungs()
+                        .iter()
+                        .map(|(rung, count)| format!("{rung} {count}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if !rungs.is_empty() {
+                        println!("    killed by: {rungs}");
+                    }
+                    if mutations.killed_by_check > 0 {
+                        println!(
+                            "    {} by a checked panic or timeout",
+                            mutations.killed_by_check
+                        );
+                    }
                 }
             }
             Format::Json => {
@@ -753,12 +768,20 @@ fn verify_command(
                     .mutations
                     .as_ref()
                     .map(|m| {
+                        let rungs = m
+                            .rungs()
+                            .iter()
+                            .map(|(rung, count)| format!("\"{rung}\":{count}"))
+                            .collect::<Vec<_>>()
+                            .join(",");
                         format!(
-                            "{{\"generated\":{},\"killed\":{},\"survived\":{},\"kill_rate\":{:.2}}}",
+                            "{{\"generated\":{},\"killed\":{},\"survived\":{},\"kill_rate\":{:.2},\"by_rung\":{{{rungs}}},\"killed_by_compile\":{},\"killed_by_check\":{}}}",
                             m.generated,
                             m.killed(),
                             m.survived.len(),
-                            m.kill_rate()
+                            m.kill_rate(),
+                            m.killed_by_compile,
+                            m.killed_by_check
                         )
                     })
                     .unwrap_or_else(|| "null".to_string());
@@ -789,6 +812,9 @@ fn verify_command(
                 min_kill_rate,
                 mutations.survived.len()
             );
+            for survivor in &mutations.survived {
+                eprintln!("  survived: {survivor}");
+            }
             return Ok(EXIT_REJECT);
         }
     }
@@ -819,6 +845,15 @@ fn run_command(
         }
     };
 
+    // `run` is the one-step workflow, so a compile database given on the same
+    // command line exports first. Without one, the AST must already exist, as
+    // for `translate`.
+    if global.compdb.is_some() {
+        let exported = export(global)?;
+        if exported != EXIT_OK {
+            return Ok(exported);
+        }
+    }
     let translated = translate_command(global)?;
     if translated != EXIT_OK {
         return Ok(translated);

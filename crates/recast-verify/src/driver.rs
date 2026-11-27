@@ -52,15 +52,7 @@ fn call_driver(
     c_body: &mut String,
     r_body: &mut String,
 ) -> Result<(), Error> {
-    let function = program
-        .function_named(&call.function)
-        .ok_or_else(|| Error::Case(format!("call target {} does not exist", call.function)))?;
-    if function.linkage != Linkage::External {
-        return Err(Error::Unsupported(format!(
-            "{} is internal; the differential can only call exported functions",
-            call.function
-        )));
-    }
+    let function = call_target(program, call)?;
     let arguments = arguments(program, function, &call.args)?;
     let c_call = format!("{}({})", function.name, arguments.c_args.join(", "));
     let r_call = format!(
@@ -152,6 +144,38 @@ fn call_driver(
     r_body.push_str(&r_print);
     r_body.push_str("\n    }\n");
     Ok(())
+}
+
+/// The function a call names, which must be a definition the linked crate
+/// exports.
+fn call_target<'a>(program: &'a Program, call: &Call) -> Result<&'a Function, Error> {
+    let function = program
+        .function_named(&call.function)
+        .ok_or_else(|| Error::Case(format!("call target {} does not exist", call.function)))?;
+    if function.linkage != Linkage::External {
+        return Err(Error::Unsupported(format!(
+            "{} is internal; the differential can only call exported functions",
+            call.function
+        )));
+    }
+    Ok(function)
+}
+
+/// The body of one Miri test: the same argument setup the V2 driver uses, then
+/// the translated call. Miri checks the executed call for undefined behavior;
+/// V2 has already compared its value with the C original.
+pub(crate) fn rust_test_call(program: &Program, call: &Call) -> Result<Vec<String>, Error> {
+    let function = call_target(program, call)?;
+    let arguments = arguments(program, function, &call.args)?;
+    let mut lines = arguments.r_setup;
+    // The Miri target adds the terminating semicolon, so every line it writes
+    // is a statement without needing to know which one is the call.
+    lines.push(format!(
+        "let _ = generated::{}({})",
+        function.name,
+        arguments.r_args.join(", ")
+    ));
+    Ok(lines)
 }
 
 /// One call's argument lists, plus the places a pointer argument needs.

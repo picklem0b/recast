@@ -1,6 +1,6 @@
 # Repository layout
 
-Status: M3 in progress. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, and the safety gate exist. Planned crates that have no implementation yet contain a library stub.
+Status: M3 exit criteria met at `v1.3.14`; build items outside them remain. The workspace, the L0 pipeline, the analysis crate, the V0 to V4 verification ladder, the `recast-report/1` report with Markdown and SARIF rendering, the safety gate, and operator mutation measured per rung exist. Planned crates that have no implementation yet contain a library stub.
 
 ## Tree
 
@@ -29,8 +29,8 @@ recast/
       src/{lib,rust}.rs
       tests/translation.rs
     recast-rt/                  # runtime shipped with generated code
-    recast-verify/              # V0 to V2, differential drivers, mutation testing
-      src/{lib,driver,mutation}.rs
+    recast-verify/              # V0 to V4, differential drivers, mutation and Miri
+      src/{lib,driver,fuzz,hygiene,miri,mutation,safety,sandbox}.rs
     recast-report/              # recast-report/1 types, gate profiles, report.md
       src/{lib,gate}.rs
     recast-interop/             # shims, layout checks and build integration
@@ -52,6 +52,9 @@ recast/
     m2-corpus.sh                # M2 sub-corpus progress, not the M2 exit criteria
     m2-refusals.sh              # the constructs outside the current M2 step are refused
     cpp-refusals.sh             # C++ input is refused by name until the C++ core (M6)
+    m3-mutation.sh              # M3 mutation threshold across V2 to V4 on the M2 corpus
+    m3-exit.sh                  # M3 exit criteria: threshold plus one-step `recast run`
+    miri.sh                     # V4 Miri check for the nightly CI job
     check-docs.py               # Markdown link checker
   tests/                        # workspace-level test data, not a Cargo target
     fixtures/                   # committed C snippets and their exported ASTs
@@ -97,7 +100,7 @@ The top-level `tests/` is not a Cargo target because the workspace root is not a
 | `recast-analysis`     | CFG, liveness, definite assignment and UB checks for the M1 subset   | `src/{cfg,liveness,definite,ub}.rs`                            |
 | `recast-translate`    | Type and expression mapping, statement emission, Rust printing       | `src/{lib,rust}.rs`                                            |
 | `recast-rt`           | Runtime support for generated code: bytes, arena, checked, FFI, raw  | `src/lib.rs` (stub)                                            |
-| `recast-verify`       | V0 to V2 drivers, differential runs, property sweeps, mutation tests | `src/{lib,driver,mutation}.rs`                                 |
+| `recast-verify`       | V0 to V4 drivers, differential runs, sweeps, mutation and Miri       | `src/{lib,driver,fuzz,hygiene,miri,mutation,safety,sandbox}.rs` |
 | `recast-report`       | `recast-report/1` types, validation, rendering and gate profiles      | `src/{lib,gate}.rs`                                            |
 | `recast-interop`      | Shim generation, layout assertions and build-system integration      | `src/lib.rs` (stub)                                            |
 | `recast-orchestrator` | Pipeline driver, report assembly, scheduler and content cache        | `src/lib.rs`                                                   |
@@ -258,3 +261,7 @@ Follow [`CONTRIBUTING.md`](../../CONTRIBUTING.md): Conventional Commits, one pur
 | `v1.3.10`            | M3 audit: the page and tag lists record `v1.3.7` to `v1.3.9`.           |
 | `v1.3.11`            | M3 repair: a floating compound assignment and a shadowed local are refused by name; `corpus/m2/scopes`. |
 | `v1.3.12`            | M3 repair: `UB-005` no longer reports the base of a store as a read.    |
+| `v1.3.13`            | M3: operator mutation across the V2 calls, V2 sweeps and V3 fuzz inputs, per-rung counts, and the 98% threshold on the M2 corpus. |
+| `v1.3.14`            | M3 repair: `recast run` exports from a compile database, and `ci/m3-exit.sh` checks the exit criteria end to end. |
+| `v1.3.15`            | M3: V4 gets a Miri test target with one test per V2 call, run when the host provides `cargo miri`. |
+| `v1.3.16`            | CI: a nightly `miri` job runs the V4 Miri check; the other jobs keep the pinned stable toolchain. |

@@ -33,16 +33,26 @@ pub struct FuzzReport {
     pub failure: Option<String>,
 }
 
-/// Run V3 for `case`, mutating its calls `executions` times.
+/// The V3 result, plus the driver and C baseline mutation testing reuses.
+pub struct FuzzRun {
+    pub reports: Vec<FuzzReport>,
+    /// The Rust driver the fuzzer compiled against the generated crate.
+    pub driver: std::path::PathBuf,
+    /// What the C original printed for the same inputs.
+    pub expected: String,
+}
+
+/// Run V3 for `case`, mutating its calls `executions` times. `None` means the
+/// case defined no calls (or fuzzing was disabled), so there is nothing to run.
 pub fn run(
     options: &Options,
     program: &Program,
     case: &Case,
     source: &Path,
     executions: u64,
-) -> Result<Vec<FuzzReport>, Error> {
+) -> Result<Option<FuzzRun>, Error> {
     if executions == 0 || case.calls.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let seed = SWEEP_SEED ^ 0x9E37_79B9_7F4A_7C15;
     let mut random = Random::new(seed);
@@ -141,7 +151,11 @@ pub fn run(
     let result = serde_json::to_string_pretty(&result)
         .map_err(|error| Error::Unsupported(error.to_string()))?;
     write(&directory.join("result.json"), &format!("{result}\n"))?;
-    Ok(reports)
+    Ok(Some(FuzzRun {
+        reports,
+        driver: rust_path.clone(),
+        expected: c_run,
+    }))
 }
 
 fn truncate(text: &str, limit: usize) -> String {

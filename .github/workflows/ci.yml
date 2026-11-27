@@ -67,8 +67,43 @@ jobs:
       - name: M2 corpus
         run: bash ci/m2-corpus.sh
 
+      - name: M3 exit criteria
+        run: bash ci/m3-exit.sh
+
       - name: M2 refusals
         run: bash ci/m2-refusals.sh
 
       - name: C++ refusals
         run: bash ci/cpp-refusals.sh
+
+  miri:
+    name: V4 Miri (nightly)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # The repository pins a stable toolchain; Miri needs nightly. The
+      # override also reaches the sandboxed `cargo miri` run in ci/miri.sh.
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang and LLVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libclang-dev llvm-dev cmake ninja-build
+
+      - name: Install nightly with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal \
+            --component miri --component rust-src --component clippy
+          cargo miri --version
+
+      - name: Build exporter
+        run: |
+          cmake -S exporter -B exporter/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build exporter/build -j 2
+
+      - name: V4 Miri check
+        run: bash ci/miri.sh

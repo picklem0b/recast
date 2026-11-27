@@ -157,6 +157,20 @@ pub struct MutationSummary {
     pub killed: usize,
     pub survived: usize,
     pub kill_rate: f64,
+    /// Behavioral kills caught by each input set: `v2-calls`, `v2-sweeps` and
+    /// `v3-fuzz`. A checked panic is counted under the rung that saw it, and
+    /// summarized separately in `killed_by_check`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub by_rung: BTreeMap<String, usize>,
+    /// Mutants the build rejected; they are killed but are not behavioral
+    /// evidence, so a reader can subtract them from `by_rung`.
+    #[serde(default)]
+    pub killed_by_compile: usize,
+    /// Behavioral kills that were a panic or a timeout rather than a value
+    /// difference; these are what the checked build (V4's configuration)
+    /// turned into an observable failure.
+    #[serde(default)]
+    pub killed_by_check: usize,
 }
 
 /// Item totals for the run.
@@ -465,6 +479,40 @@ impl Report {
                 .join(", ");
             writeln!(out, "| Evidence classes | {classes} |")
                 .expect("writing to a String cannot fail");
+        }
+        if let Some(mutation) = &self.summary.mutation {
+            writeln!(
+                out,
+                "| Mutation kill rate | {:.1}% ({}/{}) |",
+                mutation.kill_rate, mutation.killed, mutation.generated
+            )
+            .expect("writing to a String cannot fail");
+            if !mutation.by_rung.is_empty() {
+                let rungs = mutation
+                    .by_rung
+                    .iter()
+                    .map(|(rung, count)| format!("{rung} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                writeln!(out, "| Mutants killed by | {rungs} |")
+                    .expect("writing to a String cannot fail");
+            }
+            if mutation.killed_by_compile > 0 {
+                writeln!(
+                    out,
+                    "| Mutants rejected by the build | {} |",
+                    mutation.killed_by_compile
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if mutation.killed_by_check > 0 {
+                writeln!(
+                    out,
+                    "| Kills caught by a checked panic | {} |",
+                    mutation.killed_by_check
+                )
+                .expect("writing to a String cannot fail");
+            }
         }
 
         writeln!(out).expect("writing to a String cannot fail");
@@ -787,6 +835,37 @@ pub(crate) mod tests {
         assert!(
             json.contains("\"unsafe_inventory\""),
             "the report uses document 07's key for the unsafe inventory: {json}"
+        );
+    }
+
+    #[test]
+    fn markdown_renders_mutation_per_rung() {
+        let mut report = report();
+        report.summary.mutation = Some(MutationSummary {
+            generated: 6,
+            killed: 5,
+            survived: 1,
+            kill_rate: 83.3,
+            by_rung: BTreeMap::from([("v2-calls".to_string(), 3), ("v3-fuzz".to_string(), 1)]),
+            killed_by_compile: 1,
+            killed_by_check: 1,
+        });
+        let markdown = report.to_markdown();
+        assert!(
+            markdown.contains("| Mutation kill rate | 83.3% (5/6) |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| Mutants rejected by the build | 1 |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| Mutants killed by | v2-calls 3, v3-fuzz 1 |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| Kills caught by a checked panic | 1 |"),
+            "{markdown}"
         );
     }
 
